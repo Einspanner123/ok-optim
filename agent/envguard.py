@@ -39,6 +39,9 @@ CONFIG_KEYS = [
     "HTTP_PROXY",
     "HTTPS_PROXY",
     "NO_PROXY",
+    # ingest 检索/取证
+    "GITHUB_TOKEN",     # gh api 认证（core 5000/h；匿名 60/h 不够 probe 用）
+    "EMAIL",            # Unpaywall API 必填参数（不发邮件、无需注册）
 ]
 
 # launcher 注入的运行时变量
