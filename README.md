@@ -6,7 +6,7 @@ agent 任务：**ingest**（检索论文与官方仓库，按契约下载入库�
 
 Agent runtime 基于 [pi](https://pi.dev)（自包含于 `agent/vendor`，`ok setup` 一键
 安装），项目自身只含启动器（`agent/`）与任务能力（`task/`）。LLM 调用全部经
-launcher 审计（journal/usage/沙盒三层防护），人工执行 git 提交。
+launcher 审计（journal/usage/权限约束），人工执行 git 提交。
 
 ## 快速开始
 

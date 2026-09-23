@@ -27,3 +27,8 @@
 ## 汇报风格
 
 简短、结构化。结论先行；证据（脚本输出关键行）随后。
+
+## 运行结果约束
+
+- 工作目录已经是项目根目录；bash 是受控 argv 执行入口，不支持 cd、shell 连接符或变量展开。
+- 最终业务脚本必须生成当前 run_id 的 task_result.json（契约见 docs/architecture.md）；口头声称完成不计为 done。

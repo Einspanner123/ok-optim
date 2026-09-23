@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 
 def main() -> int:
@@ -36,6 +37,25 @@ def main() -> int:
         "cwd": os.getcwd(),
         "echo": args.echo,
     }
+
+    # A successful deterministic script, not the LLM, publishes the task result.
+    if os.environ.get("AGENT_RUN_ID"):
+        project = Path(__file__).resolve().parents[3]
+        raw_run_dir = Path(os.environ["AGENT_RUN_DIR"])
+        run_dir = raw_run_dir.resolve()
+        run_dir.relative_to(project / "runs")
+        if run_dir != raw_run_dir or not run_dir.is_dir():
+            raise ValueError("invalid run directory")
+        result = {
+            "version": 1, "run_id": os.environ["AGENT_RUN_ID"],
+            "task": "hello", "slug": os.environ["AGENT_SLUG"],
+            "status": "done", "validation_status": "passed",
+            "checks": [{"name": "hello_script", "status": "passed"}],
+            "reason": "hello script completed and produced its environment snapshot",
+        }
+        temporary = run_dir / "task_result.json.tmp"
+        temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(run_dir / "task_result.json")
 
     if args.json:
         print(json.dumps(payload, ensure_ascii=False))

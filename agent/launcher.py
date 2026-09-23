@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import uuid
@@ -79,6 +80,10 @@ def build_prompt(task: str, spec: assembly.SkillSpec, overrides: dict[str, str])
     if overrides:
         lines.append("本次注入的参数（环境变量，只读）:")
         for key, val in sorted(overrides.items()):
+            if key not in spec.required_env + spec.optional_env:
+                continue
+            if any(part in key.upper() for part in ("SECRET", "TOKEN", "PASSWORD", "API_KEY")):
+                val = "[redacted]"
             shown = val if len(val) <= 120 else val[:117] + "..."
             lines.append(f"  {key}={shown}")
         lines.append("")
@@ -90,6 +95,7 @@ def build_prompt(task: str, spec: assembly.SkillSpec, overrides: dict[str, str])
         "约束提醒: 你没有任何直接写盘工具（write/edit 会被拒绝）；"
         "一切操作通过运行 task 脚本完成（bash 仅允许运行当前任务的脚本与只读命令）。"
     )
+    lines.append("工作目录已经是项目根目录；不要 cd，不要使用 shell 连接符或变量展开。")
     return "\n".join(lines)
 
 
@@ -151,25 +157,38 @@ def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path) -> int:
         stderr=subprocess.STDOUT, text=True, bufsize=1,
     ) as proc:
         assert proc.stdout is not None
-        for line in proc.stdout:
-            line = line.rstrip("\n")
-            if not line:
-                continue
-            sink.write(line + "\n")
+        try:
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                sink.write(line + "\n")
+                sink.flush()
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    print(line)
+                    continue
+                if isinstance(event, dict):
+                    render_event(event, sys.stdout)
+            proc.wait()
+            return proc.returncode
+        except BaseException:
+            proc.terminate()
             try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                # pi 的非 json 输出（警告等）直接透传
-                print(line)
-                continue
-            render_event(event, sys.stdout)
-        proc.wait()
-        return proc.returncode
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            raise
+
 
 
 def cmd_run(args: argparse.Namespace) -> int:
     task = args.task
-    if not (REPO_ROOT / "task" / task).is_dir():
+    if (not re.fullmatch(r"[A-Za-z0-9_-]+", task)
+            or not (REPO_ROOT / "task" / task).is_dir()
+            or (REPO_ROOT / "task" / task).resolve() != REPO_ROOT / "task" / task):
         print(f"未知任务: {task}（task/{task}/ 不存在）", file=sys.stderr)
         return EXIT_FATAL
 
@@ -185,12 +204,21 @@ def cmd_run(args: argparse.Namespace) -> int:
         return EXIT_FATAL
 
     slug = resolve_slug(task, overrides, dotenv)
+    run_id = uuid.uuid4().hex
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = assembly.make_run_dir(task, slug, ts)
+    try:
+        run_dir = assembly.make_run_dir(task, slug, ts)
+    except PreflightError as exc:
+        print(f"[preflight] {exc}", file=sys.stderr)
+        return EXIT_FATAL
 
     node_bin, pi_entry = find_pi()
     agent_dir = REPO_ROOT / "agent" / "runtime"
     agent_vars = {
+        "AGENT_PROJECT_ROOT": str(REPO_ROOT),
+        "AGENT_SCRIPTS_JSON": json.dumps(list(spec.scripts)),
+        "AGENT_SCRIPT_ENV_JSON": json.dumps(spec.required_env + spec.optional_env),
+        "AGENT_RUN_ID": run_id,
         "AGENT_TASK": task,
         "AGENT_SLUG": slug,
         "AGENT_RUN_DIR": str(run_dir),
@@ -218,6 +246,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     # pi 公共参数: 显式装配（不依赖 .pi/ 项目目录）
     common_args = [
         "--approve",
+        "--no-extensions",  # Only reviewed extensions explicitly listed below.
+        "--no-prompt-templates",
+        "--tools", "read,bash,ask_user",
+        "-e", str(REPO_ROOT / "agent" / "extensions" / "bootstrap-guard.ts"),
         "--provider", "ok-llm", "--model", model_id,
         "--name", session_name,
         "--session-dir", str(run_dir),
@@ -227,23 +259,24 @@ def cmd_run(args: argparse.Namespace) -> int:
         "-e", str(REPO_ROOT / "agent" / "extensions" / "ask-user.ts"),
     ]
 
-    if interactive:
-        # 交互模式: pi TUI 接管终端（ask_user 可用）
-        cmd = [node_bin, pi_entry, *common_args, prompt]
-        code = subprocess.call(cmd, env=env, cwd=str(REPO_ROOT))
-        summary = journal.finalize(run_dir, task, slug, code, interactive=True)
-        journal.print_summary(summary, run_dir)
-        return EXIT_OK if code == 0 else EXIT_FATAL
-
-    # 非交互: json 事件流模式
-    cmd = [node_bin, pi_entry, "-p", "--mode", "json", *common_args, prompt]
-    print(f"[launcher] pi = {pi_entry} (vendor, node {bootstrap.NODE_VERSION})")
-    print(f"[launcher] task={task} slug={slug} model=ok-llm/{model_id}")
-    print(f"[launcher] run_dir={run_dir}\n")
-    code = run_pi_json(cmd, env, run_dir)
-    summary = journal.finalize(run_dir, task, slug, code, interactive=False)
+    try:
+        if interactive:
+            cmd = [node_bin, pi_entry, *common_args, prompt]
+            code = subprocess.call(cmd, env=env, cwd=str(REPO_ROOT))
+        else:
+            cmd = [node_bin, pi_entry, "-p", "--mode", "json", *common_args, prompt]
+            print(f"[launcher] task={task} slug={slug} model=ok-llm/{model_id}")
+            print(f"[launcher] run_dir={run_dir}\n")
+            code = run_pi_json(cmd, env, run_dir)
+    except KeyboardInterrupt:
+        code = 130
+    except OSError as exc:
+        print(f"[launcher] runtime failed: {exc}", file=sys.stderr)
+        code = EXIT_FATAL
+    summary = journal.finalize(run_dir, task, slug, code, interactive, run_id=run_id)
     journal.print_summary(summary, run_dir)
-    return EXIT_OK if code == 0 else EXIT_FATAL
+    return summary.exit_code
+
 
 
 def cmd_batch(args: argparse.Namespace) -> int:

@@ -6,15 +6,24 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "target": "es2022",
-    "types": ["node"],
-    "typeRoots": ["agent/vendor/node_modules/@types"],
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "agent/vendor/node_modules/@types"
+    ],
     "baseUrl": ".",
     "paths": {
       "@earendil-works/pi-coding-agent": [
         "agent/vendor/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
       ],
-      "typebox": ["agent/vendor/node_modules/typebox"]
-    }
+      "typebox": [
+        "agent/vendor/node_modules/typebox"
+      ]
+    },
+    "allowImportingTsExtensions": true
   },
-  "include": ["agent/extensions/**/*.ts"]
+  "include": [
+    "agent/extensions/**/*.ts"
+  ]
 }

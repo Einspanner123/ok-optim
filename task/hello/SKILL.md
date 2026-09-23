@@ -36,3 +36,5 @@ M0 验收件。目的：验证启动器 → pi → path-guard → task 脚本 �
 
 - hello 脚本以 exit 0 运行且输出了合法 JSON
 - 汇报中明确给出 FOO 注入值（或指出未注入）
+
+- launcher 模式下，脚本原子写入本次 run_id 对应的 task_result.json；由 journal 核验，不能仅凭自然语言汇报判为 done。

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -124,6 +125,11 @@ def render_guard() -> Path:
 
 
 def make_run_dir(task: str, slug: str, ts: str) -> Path:
+    for label, value in (("task", task), ("slug", slug), ("timestamp", ts)):
+        if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}", value):
+            raise PreflightError(f"invalid {label}: {value!r}")
     run_dir = REPO_ROOT / "runs" / ts / task / slug
-    run_dir.mkdir(parents=True, exist_ok=True)
+    if run_dir.resolve() != run_dir:
+        raise PreflightError("run directory must not traverse symlinks")
+    run_dir.mkdir(parents=True, exist_ok=False)
     return run_dir
