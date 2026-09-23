@@ -11,3 +11,9 @@ wheels/
 
 # docs of trae
 .trae/
+
+# agent runtime state
+.env
+agent/runtime/
+runs/
+.ingest/

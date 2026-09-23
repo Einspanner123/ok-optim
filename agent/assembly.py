@@ -1,0 +1,119 @@
+"""assembly: 装配层。
+
+- skill.yaml 读取与 preflight（required_env 缺失即拒绝启动并打印注入清单）
+- .pi/skills/<task> symlink 校验
+- models.json 渲染（OpenAI 兼容 provider，baseUrl/apiKey 从 env 快照）
+- 运行工作区 runs/<ts>/<task>/<slug>/ 创建
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+class PreflightError(Exception):
+    """装配失败，附人类可读说明。"""
+
+
+@dataclass
+class SkillSpec:
+    name: str
+    description: str
+    required_env: list[str]
+    optional_env: list[str]
+    scripts: dict[str, dict]
+
+
+def task_dir(task: str) -> Path:
+    return REPO_ROOT / "task" / task
+
+
+def load_skill(task: str) -> SkillSpec:
+    path = task_dir(task) / "skill.yaml"
+    if not path.is_file():
+        raise PreflightError(f"task '{task}' 缺少 skill.yaml: {path}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise PreflightError(f"skill.yaml 格式错误（应为 mapping）: {path}")
+    return SkillSpec(
+        name=data.get("name", task),
+        description=data.get("description", ""),
+        required_env=list(data.get("required_env") or []),
+        optional_env=list(data.get("optional_env") or []),
+        scripts=dict(data.get("scripts") or {}),
+    )
+
+
+def preflight(task: str, env: dict[str, str]) -> SkillSpec:
+    """校验 skill 装配与 required_env；失败抛 PreflightError。"""
+    spec = load_skill(task)
+
+    skill_md = task_dir(task) / "SKILL.md"
+    if not skill_md.is_file():
+        raise PreflightError(f"task '{task}' 缺少 SKILL.md: {skill_md}")
+
+    missing = [key for key in spec.required_env if key not in env]
+    if missing:
+        lines = [f"required_env 缺失，拒绝启动 task '{task}':"]
+        lines += [f"  - {key}" for key in missing]
+        lines.append("用 --set KEY=VALUE 注入，或在 .env 配置后重试。")
+        raise PreflightError("\n".join(lines))
+    return spec
+
+
+def render_models_json(env: dict[str, str]) -> Path:
+    """渲染 OpenAI 兼容 provider 到 agent/runtime/models.json。
+
+    apiKey 用 $OPENAI_API_KEY 插值：pi 子进程环境里有该值（envguard 传入），
+    磁盘上不落明文密钥。
+    """
+    agent_dir = REPO_ROOT / "agent" / "runtime"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+
+    base_url = env.get("OPENAI_BASE_URL", "").rstrip("/")
+    model_id = env.get("AGENT_LLM_MODEL", "")
+    if not base_url or not model_id:
+        raise PreflightError(
+            "缺少 OPENAI_BASE_URL / AGENT_LLM_MODEL（.env 或环境变量），无法渲染 models.json"
+        )
+
+    provider = {
+        "baseUrl": base_url,
+        "api": "openai-completions",
+        "apiKey": "$OPENAI_API_KEY",
+        "compat": {
+            "supportsDeveloperRole": False,
+            "supportsReasoningEffort": False,
+        },
+        "models": [
+            {
+                "id": model_id,
+                "name": model_id,
+                "reasoning": False,
+                "input": ["text"],
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                "contextWindow": 128000,
+                "maxTokens": 16384,
+                # 解码参数冻结：temperature 0 / top_p 1
+                "samplingParams": {"temperature": 0, "top_p": 1},
+            }
+        ],
+    }
+    models_path = agent_dir / "models.json"
+    models_path.write_text(
+        json.dumps({"providers": {"ok-llm": provider}}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return models_path
+
+
+def make_run_dir(task: str, slug: str, ts: str) -> Path:
+    run_dir = REPO_ROOT / "runs" / ts / task / slug
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
