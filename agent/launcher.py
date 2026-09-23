@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -99,58 +101,139 @@ def build_prompt(task: str, spec: assembly.SkillSpec, overrides: dict[str, str])
     return "\n".join(lines)
 
 
-def render_event(event: dict, out) -> None:
-    """把单个 pi json 事件渲染为人类可读轨迹。"""
-    etype = event.get("type")
+# ---- 输出渲染器（--output human|quiet|raw）----
+# 展示层约定：pi --mode json 事件流是唯一输入；events.jsonl 永远存全量原始
+# 事件，渲染器只裁剪 stdout 呈现，不损失任何信息。
 
-    if etype == "message_update":
-        ame = event.get("assistantMessageEvent") or {}
-        delta = ame.get("delta")
-        if not delta:
+DIM, RESET = "\033[2m", "\033[0m"
+CYAN, RED = "\033[36m", "\033[31m"
+
+
+def _color(out, code: str, text: str) -> str:
+    return f"{code}{text}{RESET}" if hasattr(out, "isatty") and out.isatty() else text
+
+
+def _tool_result_text(event: dict) -> str:
+    result = event.get("result")
+    text = ""
+    if isinstance(result, dict):
+        content = result.get("content")
+        if isinstance(content, list):
+            text = " ".join(
+                block.get("text", "") for block in content if isinstance(block, dict)
+            )
+        elif content is not None:
+            text = str(content)
+    text = text.replace("\n", " ")
+    return text[:297] + "..." if len(text) > 300 else text
+
+
+class HumanRenderer:
+    """默认：流式轨迹（思考 dim 色）+ 收尾横幅。"""
+
+    def __init__(self, out, err) -> None:
+        self.out, self.err = out, err
+
+    def header(self, task: str, slug: str, model: str, run_dir: Path) -> None:
+        print(f"▶ {task}/{slug} · model=ok-llm/{model} · {run_dir}", file=self.out)
+        print(file=self.out)
+
+    def line(self, raw: str, event: dict | None) -> None:
+        if event is None:  # pi 的非 json 输出（警告等）直接透传
+            print(raw, file=self.out)
             return
-        if ame.get("type") == "thinking_delta":
-            out.write(delta)
-            out.flush()
-        elif ame.get("type") == "text_delta":
-            out.write(delta)
-            out.flush()
+        etype = event.get("type")
+        if etype == "message_update":
+            ame = event.get("assistantMessageEvent") or {}
+            delta = ame.get("delta")
+            if not delta:
+                return
+            if ame.get("type") == "thinking_delta":
+                print(_color(self.out, DIM, delta), end="", flush=True)
+            elif ame.get("type") == "text_delta":
+                print(delta, end="", flush=True)
+        elif etype == "tool_execution_start":
+            args_str = json.dumps(event.get("args") or {}, ensure_ascii=False)
+            if len(args_str) > 200:
+                args_str = args_str[:197] + "..."
+            print(f"\n{_color(self.out, CYAN, '[tool]')} "
+                  f"{event.get('toolName', '?')} {args_str}", file=self.out)
+        elif etype == "tool_execution_end":
+            text = _tool_result_text(event)
+            tag = _color(self.out, RED, "[tool:ERR]") if event.get("isError") \
+                else _color(self.out, CYAN, "[tool:ok]")
+            print(f"{tag} {text}", file=self.out)
+        elif etype == "message_end":
+            message = event.get("message") or {}
+            if message.get("role") == "assistant" and message.get("stopReason") == "error":
+                print(f"\n{_color(self.out, RED, '[error]')} "
+                      f"LLM 请求失败: {message.get('errorMessage', '?')}", file=self.out)
+        elif etype == "auto_retry_start":
+            print(_color(self.out, DIM, "[retry] 瞬时错误，自动重试..."), file=self.out)
 
-    elif etype == "tool_execution_start":
-        tool = event.get("toolName", "?")
-        args = event.get("args") or {}
-        args_str = json.dumps(args, ensure_ascii=False)
-        if len(args_str) > 200:
-            args_str = args_str[:197] + "..."
-        print(f"\n[tool] {tool} {args_str}")
-
-    elif etype == "tool_execution_end":
-        result = event.get("result")
-        text = ""
-        if isinstance(result, dict):
-            content = result.get("content")
-            if isinstance(content, list):
-                text = " ".join(
-                    block.get("text", "") for block in content if isinstance(block, dict)
-                )
-            elif content is not None:
-                text = str(content)
-        text = text.replace("\n", " ")
-        if len(text) > 300:
-            text = text[:297] + "..."
-        flag = "ERR" if event.get("isError") else "ok"
-        print(f"[tool:{flag}] {text}")
-
-    elif etype == "message_end":
-        message = event.get("message") or {}
-        if message.get("role") == "assistant" and message.get("stopReason") == "error":
-            print(f"\n[error] LLM 请求失败: {message.get('errorMessage', '?')}")
-
-    elif etype == "auto_retry_start":
-        print("[retry] 瞬时错误，自动重试...")
+    def footer(self, summary, run_dir: Path, elapsed: float) -> None:
+        u = summary.usage
+        print(f"\n{'═' * 62}", file=self.out)
+        print(f"{'✅' if summary.exit_code == 0 else '❌'} {summary.status} · "
+              f"task exit {summary.exit_code} · tools {summary.tool_calls} · "
+              f"tokens in {u.input} / out {u.output} · {elapsed:.1f}s", file=self.out)
+        if summary.last_error:
+            print(f"  last error: {summary.last_error[:200]}", file=self.out)
+        print(f"  run dir: {run_dir}", file=self.out)
+        if summary.session_file:
+            print(f"  session: {run_dir / summary.session_file}", file=self.out)
 
 
-def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path) -> int:
-    """非交互: pi -p --mode json，逐行转发渲染 + 原始事件落盘。"""
+class QuietRenderer:
+    """CI/脚本消费：全程静默，结束时输出一行 JSON 摘要。"""
+
+    def __init__(self, out, err) -> None:
+        self.out, self.err = out, err
+
+    def header(self, task: str, slug: str, model: str, run_dir: Path) -> None:
+        pass
+
+    def line(self, raw: str, event: dict | None) -> None:
+        pass  # 轨迹不看 stdout；需要时读 events.jsonl
+
+    def footer(self, summary, run_dir: Path, elapsed: float) -> None:
+        payload = {
+            "task": summary.task,
+            "slug": summary.slug,
+            "status": summary.status,
+            "exit": summary.exit_code,
+            "run_dir": str(run_dir),
+            "tool_calls": summary.tool_calls,
+            "tokens": summary.usage.total_tokens,
+            "duration_s": round(elapsed, 1),
+        }
+        if summary.last_error:
+            payload["last_error"] = summary.last_error[:200]
+        print(json.dumps(payload, ensure_ascii=False), file=self.out)
+
+
+class RawRenderer:
+    """机器管道：pi 事件行原样透传，launcher 只当审计代理。"""
+
+    def __init__(self, out, err) -> None:
+        self.out, self.err = out, err
+
+    def header(self, task: str, slug: str, model: str, run_dir: Path) -> None:
+        pass
+
+    def line(self, raw: str, event: dict | None) -> None:
+        print(raw, file=self.out)
+
+    def footer(self, summary, run_dir: Path, elapsed: float) -> None:
+        pass  # 结果读 journal.json；退出码即结论
+
+
+RENDERERS = {"human": HumanRenderer, "quiet": QuietRenderer, "raw": RawRenderer}
+
+
+def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path,
+                renderer) -> int:
+    """非交互: pi -p --mode json，逐行转发渲染器 + 原始事件落盘。"""
     events_path = run_dir / "events.jsonl"
     with events_path.open("w", encoding="utf-8") as sink, subprocess.Popen(
         cmd, env=env, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
@@ -167,10 +250,9 @@ def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path) -> int:
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError:
-                    print(line)
+                    renderer.line(line, None)
                     continue
-                if isinstance(event, dict):
-                    render_event(event, sys.stdout)
+                renderer.line(line, event if isinstance(event, dict) else None)
             proc.wait()
             return proc.returncode
         except BaseException:
@@ -270,22 +352,29 @@ def cmd_run(args: argparse.Namespace) -> int:
         "-e", str(REPO_ROOT / "agent" / "extensions" / "ask-user.ts"),
     ]
 
+    renderer = None
+    elapsed = 0.0
     try:
         if interactive:
             cmd = [node_bin, pi_entry, *common_args, prompt]
             code = subprocess.call(cmd, env=env, cwd=str(REPO_ROOT))
         else:
+            renderer = RENDERERS[args.output](sys.stdout, sys.stderr)
             cmd = [node_bin, pi_entry, "-p", "--mode", "json", *common_args, prompt]
-            print(f"[launcher] task={task} slug={slug} model=ok-llm/{model_id}")
-            print(f"[launcher] run_dir={run_dir}\n")
-            code = run_pi_json(cmd, env, run_dir)
+            renderer.header(task, slug, model_id, run_dir)
+            t0 = time.monotonic()
+            code = run_pi_json(cmd, env, run_dir, renderer)
+            elapsed = time.monotonic() - t0
     except KeyboardInterrupt:
         code = 130
     except OSError as exc:
         print(f"[launcher] runtime failed: {exc}", file=sys.stderr)
         code = EXIT_FATAL
     summary = journal.finalize(run_dir, task, slug, code, interactive, run_id=run_id)
-    journal.print_summary(summary, run_dir)
+    if interactive:
+        journal.print_summary(summary, run_dir)
+    elif renderer is not None:
+        renderer.footer(summary, run_dir, elapsed)
     return summary.exit_code
 
 
@@ -336,6 +425,10 @@ def main() -> None:
     p_run.add_argument(
         "--interactive", action="store_true",
         help="交互模式（TUI；默认非交互，ask_user 降级为 needs_human 分支）",
+    )
+    p_run.add_argument(
+        "--output", choices=sorted(RENDERERS), default="human",
+        help="非交互输出样式: human=人类轨迹 / quiet=一行 JSON 摘要 / raw=事件透传",
     )
     p_run.set_defaults(func=cmd_run)
 

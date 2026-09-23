@@ -161,9 +161,10 @@ class ResultTests(unittest.TestCase):
         (self.root / ".venv/bin").mkdir(parents=True)
         (self.root / ".venv/bin/python").write_text("", encoding="utf-8")
         spec = assembly.SkillSpec("hello", "", [], ["FOO"], {"hello": {"args": {}}})
-        args = argparse.Namespace(task="hello", set=[], interactive=False)
+        args = argparse.Namespace(task="hello", set=[], interactive=False,
+                                  output="quiet")
         for outcome, expected in [("error", 3), ("needs_human", 2), ("done", 0)]:
-            def fake_pi(cmd, env, run_dir):
+            def fake_pi(cmd, env, run_dir, renderer, _outcome=outcome):
                 self.evidence(stop="error" if outcome == "error" else "stop")
                 self.result(status="needs_human" if outcome == "needs_human" else "done",
                             validation="skipped" if outcome == "needs_human" else "passed",

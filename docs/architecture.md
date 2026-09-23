@@ -131,7 +131,7 @@ uv run ok pending             # 待人工项（M4）
 | 场景 | 模式 | 说明 |
 |---|---|---|
 | 人工值守调试 | launcher 交互模式（TUI） | `uv run ok run --task <t> --interactive`；pi 由 launcher 显式装配（`--skill` + `-e`），ask_user 可用 |
-| 启动器单次任务 | `pi -p --mode json` | launcher 拉起，逐事件流式转发渲染到 stdout（思考 + 工具调用 + 结果） |
+| 启动器单次任务 | `pi -p --mode json` | launcher 拉起，按 `--output` 渲染到 stdout：human（默认，流式轨迹+横幅）/ quiet（一行 JSON 摘要）/ raw（事件透传）；events.jsonl 恒存全量原始事件 |
 | 批处理 | launcher 循环逐模型拉起 | 每模型独立 session（`--name <task>/<slug>`），读 state 跳过已完成 |
 
 审计：pi session 由 launcher 以 `--session-dir` 定向到 run 目录（append-only，含
