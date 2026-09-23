@@ -113,7 +113,23 @@ def _color(out, code: str, text: str) -> str:
     return f"{code}{text}{RESET}" if hasattr(out, "isatty") and out.isatty() else text
 
 
-def _tool_result_text(event: dict) -> str:
+def _render_tool_args(tool: str, args: dict) -> str:
+    """按工具类型渲染调用行：bash 命令、read 相对路径，其余 JSON 截断。"""
+    if tool == "bash" and isinstance(args.get("command"), str):
+        cmd = args["command"]
+        return "$ " + (cmd[:197] + "..." if len(cmd) > 200 else cmd)
+    if tool == "read" and isinstance(args.get("path"), str):
+        path = args["path"]
+        prefix = str(REPO_ROOT) + "/"
+        if path.startswith(prefix):
+            path = path[len(prefix):]
+        return path
+    args_str = json.dumps(args, ensure_ascii=False)
+    return (args_str[:197] + "...") if len(args_str) > 200 else args_str
+
+
+def _render_tool_result(event: dict) -> str:
+    """结果行：JSON 输出缩进美化（截断 600），纯文本单行截断。"""
     result = event.get("result")
     text = ""
     if isinstance(result, dict):
@@ -124,8 +140,12 @@ def _tool_result_text(event: dict) -> str:
             )
         elif content is not None:
             text = str(content)
-    text = text.replace("\n", " ")
-    return text[:297] + "..." if len(text) > 300 else text
+    try:
+        pretty = json.dumps(json.loads(text), ensure_ascii=False, indent=2)
+        return pretty[:600] + "..." if len(pretty) > 600 else pretty
+    except (json.JSONDecodeError, ValueError):
+        single = text.replace("\n", " ")
+        return single[:297] + "..." if len(single) > 300 else single
 
 
 class HumanRenderer:
@@ -153,13 +173,12 @@ class HumanRenderer:
             elif ame.get("type") == "text_delta":
                 print(delta, end="", flush=True)
         elif etype == "tool_execution_start":
-            args_str = json.dumps(event.get("args") or {}, ensure_ascii=False)
-            if len(args_str) > 200:
-                args_str = args_str[:197] + "..."
+            tool = event.get("toolName", "?")
+            args = event.get("args") or {}
             print(f"\n{_color(self.out, CYAN, '[tool]')} "
-                  f"{event.get('toolName', '?')} {args_str}", file=self.out)
+                  f"{_render_tool_args(tool, args)}", file=self.out)
         elif etype == "tool_execution_end":
-            text = _tool_result_text(event)
+            text = _render_tool_result(event)
             tag = _color(self.out, RED, "[tool:ERR]") if event.get("isError") \
                 else _color(self.out, CYAN, "[tool:ok]")
             print(f"{tag} {text}", file=self.out)
