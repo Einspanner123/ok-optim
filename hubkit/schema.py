@@ -25,10 +25,11 @@ PDF_MIN_BYTES = 50 * 1024
 
 # ---- repo 快照 / gitignore 安全 ----
 
-# 代码相关扩展（<2MB 被忽略规则命中即需例外块）；.txt: requirements.txt 等运行所需
+# 代码相关扩展（<2MB 被忽略规则命中即需例外块）
+# .txt: requirements.txt 等运行所需；.csv: GenePT 事故——input_data/gene_info_table.csv 被吞
 CODE_EXTS = {
     ".py", ".pyi", ".r", ".sh", ".yaml", ".yml", ".toml", ".json",
-    ".pkl", ".ipynb", ".cfg", ".ini", ".txt",
+    ".pkl", ".ipynb", ".cfg", ".ini", ".txt", ".csv",
 }
 CODE_SIZE_LIMIT = 2 * 1024 * 1024
 

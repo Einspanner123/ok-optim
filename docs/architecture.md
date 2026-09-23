@@ -12,7 +12,9 @@
 
 项目目标：围绕 `single-cell-hub`（20 个单细胞基础模型标准化快照）做两件事——
 
-1. **ingest**：检索论文与官方仓库，按 hub 契约下载入库（人工 commit/PR）
+1. **ingest**：论文检索入库，两个模式——**discover**（按种子或自主发现单细胞论文
+   与其代码仓库，校验入库）/ **audit**（复核已固化条目：空列、论文↔仓库对应、
+   失效重查），均按 hub 契约产出条目（人工 commit/PR）
 2. **optimize**：遍历或指定仓库做推理侧昇腾 NPU 适配优化与分级验证
 
 架构把 agent 框架层交给 **pi**（agent harness），项目自己只写两样东西：
@@ -209,10 +211,10 @@ ingest 侧），纯读方（optimize）按它读取、读错即报，不需要�
 
 ## 任务通用契约
 
-所有任务（含未来 task/discover）共用（标准结构模板：`task/_template/`）：
+所有任务共用（标准结构模板：`task/_template/`）：
 
 - **skill.yaml**：`name` / `description` / `required_env` / `optional_env` /
-  `scripts`（脚本名 → 参数说明；path-guard 校验脚本声明，参数语义由 argparse 校验）
+  `scripts`（脚本名 → 参数 JSON Schema，供 path-guard 校验 bash 调用与 argparse 对齐）
 - **SKILL.md**（Agent Skills 标准）：目标 → 流程步骤 → 工具用法 → 边界与禁止事项 →
   何时问人 → 完成标准（Done 的定义）
 - **scripts 规范**：
@@ -377,7 +379,8 @@ hub 根 `.gitignore` 按扩展名大类忽略（csv/h5ad/权重/压缩包/notebo
 ```
 
 - 判定：apply 前用 pathspec 按忽略规则模拟快照全部文件；代码相关扩展
-  （`.py .pyi .r .sh .yaml .yml .toml .json .pkl .ipynb` 等）被命中即需例外
+  （`.py .pyi .r .sh .yaml .yml .toml .json .pkl .ipynb .txt .csv` 等）被命中
+  即需例外（.csv 吸取 GenePT gene_info_table.csv 被吞教训）
 - 例外块追加在 `.gitignore` 末尾"例外"区，一个模型一块，注释注明模型名与原因
 - 存量先例：Geneformer `*.pkl/*.ipynb`、scPRINT `*.ipynb`（GenePT 事故：代码文件
   被吞且无人察觉——本规则为直接防线）
@@ -430,6 +433,12 @@ hub 根 `.gitignore` 按扩展名大类忽略（csv/h5ad/权重/压缩包/notebo
 
 **种子分流接口**：`scholar_lookup` 接受任意种子形态——`arxiv:ID` / `doi:...` /
 `pmid:...` / URL（S2 匹配失败落 fetch_page）/ 纯标题（S2 title search）。
+
+**仓库发现公理**（ingest 领域事实）：若论文有开源仓库，链接必出现在论文全文中。
+`extract_repo_links` 对已下载 PDF 做确定性提取——github / gitlab / huggingface /
+zenodo / gitee 等仓库域 URL 清单 + Code Availability 段落原文 + 全文缓存；**检索
+不出 → 确定性 `none`（终态，证据即"全文无仓库链接"），LLM 不得推翻**。检索出的
+链接清单交 agent 挑选官方候选，定性仍走下方 probe 判定。
 
 **官方性判定规则**（固化在 `github_search --probe`，非 LLM 判定）：
 
@@ -491,51 +500,87 @@ Unpaywall → `pdf_needs_manual`；落地校验 %PDF magic + ≥50KB。
 
 # Part III 下游任务实例化
 
-## task/ingest（hub 唯一写入方）
+## task/ingest（hub 唯一写入方，两模式）
 
-目标：给定种子（论文 URL / arXiv ID / DOI / 仓库 URL），产出符合 hub 契约的完整
-入库产物，校验全绿后给出**人工 commit/PR 步骤清单**。agent 不执行 git 提交。
+目标：**discover**——给定种子（论文 URL / arXiv ID / DOI / 标题）或在边界内自主
+发现单细胞论文，检索定位论文与官方仓库，产出符合 hub 契约的完整入库产物；
+**audit**——复核检索记录表与 hub 的一致性（空列、论文↔仓库对应、失效条目）。
+两条流程在 ④⑤⑥ 汇合，校验全绿后给出**人工 commit/PR 步骤清单**。agent 不执行
+git 提交。
 
-### skill.yaml（10 脚本）
+### skill.yaml（13 脚本）
 
 ```yaml
 name: ingest
-description: 检索论文与官方仓库，按 single-cell-hub 契约下载入库
-required_env: [INGEST_SEED_URL]
-optional_env: [INGEST_MODEL_NAME, INGEST_VENUE, INGEST_YEAR, INGEST_COMMIT]
+description: 论文检索入库（discover 发现 / audit 复核），按 single-cell-hub 契约产出条目
+required_env: [INGEST_MODE]            # discover | audit
+optional_env:
+  - INGEST_SEED_URL                    # 种子：doi:/arxiv:/URL/标题；audit 下为指定单点复核
+  - INGEST_MAX_NEW                     # discover：单 run 新候选数量上限
+  - INGEST_YEAR_FROM / INGEST_YEAR_TO  # discover：年份窗口（如 2024 / 2025）
+  - INGEST_MODEL_NAME / INGEST_VENUE / INGEST_YEAR / INGEST_COMMIT
 scripts:
-  scholar_lookup:  {args: {seed: str, limit: int?}}
-  search_arxiv:    {args: {query: str, limit: int?}}
-  web_search:      {args: {query: str, limit: int?}}
-  github_search:   {args: {query: str, probe: bool?}}
-  fetch_page:      {args: {url: str, want: str?}}   # want: code_availability | metadata | full
-  download_pdf:    {args: {slug: str, paper_url: str}}
-  acquire_repo:    {args: {slug: str, repo_url: str, commit: str?}}
-  format_entry:    {args: {slug: str}}
-  validate_entry:  {args: {slug: str}}
-  apply_entry:     {args: {slug: str, confirm: bool}}
+  scholar_lookup:     {args: {seed: str, limit: int?}}
+  search_arxiv:       {args: {query: str, limit: int?}}
+  web_search:         {args: {query: str, limit: int?}}
+  github_search:      {args: {query: str, probe: bool?}}
+  fetch_page:         {args: {url: str, want: str?}}   # want: code_availability | metadata | full
+  download_pdf:       {args: {slug: str, paper_url: str}}
+  extract_repo_links: {args: {slug: str}}              # PDF 全文挖仓库链接（两模式共用核心）
+  acquire_repo:       {args: {slug: str, repo_url: str, commit: str?}}
+  format_entry:       {args: {slug: str}}
+  validate_entry:     {args: {slug: str}}
+  apply_entry:        {args: {slug: str, confirm: bool}}
+  ledger_update:      {args: {slug: str, verdict: str, evidence: str?}}
+  audit_scan:         {args: {key: str?}}              # 无 key 全量扫描；有 key 指定复核
 ```
 
-### 六步流程（SKILL.md 编排，M2）
+### 两模式流程（SKILL.md 编排）
 
 ```text
-① resolve   解析种子 → scholar_lookup / search_arxiv / web_search / github_search
-            定位准确的论文链接与官方仓库链接
-② verify    github_search --probe 采集官方性证据 → 确定性判定（抽象层规则）
-③ acquire   download_pdf（多源链）+ acquire_repo（三通道）
+discover 入口                          audit 入口
+① resolve   解析种子或在边界内自主     ⓪ audit_scan  检索记录表 × hub 交叉扫描：
+            发现（数量 INGEST_MAX_NEW、             异常清单 = 哈希不匹配 /
+            年份窗口护栏），定位论文                 unavailable / 空列条目
+            与仓库链接                           ① 对异常条目按 discover ②③ 重查；
+② verify    github_search --probe       　           INGEST_SEED_URL 指定时单点复核；
+            采集官方性证据 → 确定性判定              正常条目仅确定性校验，不跑 LLM
+③ acquire   download_pdf（多源链）+     ②③  同 discover
+            extract_repo_links（PDF 挖库）+
+            acquire_repo（三通道）
+④⑤⑥ 共享：
 ④ format    format_entry：按 hub 契约渲染六行 bullet + CSV 行 + 双 README + gitignore 例外
-⑤ validate  validate_entry（七条规则）全绿；不过则带报告回修（≤2 轮），仍败 → needs_human
-⑥ report    产出验收单 report.md：产物清单 + 证据链 + 人工 git add/commit/PR 步骤
+⑤ validate  validate_entry（临时拼接 + 七条规则）全绿；不过则带报告回修（≤2 轮），仍败 → needs_human
+⑥ apply     apply_entry（validate 全绿 + confirm=true 前置）落位；ledger_update 登记结论；
+            产出验收单 report.md：产物清单 + 证据链 + 人工 git 步骤
 ```
+
+### 检索记录表（ledger）
+
+`.ingest/ledger.jsonl`（gitignore，append-only，唯一写入方 `ledger_update`）。
+hub 契约管"结果正确"，本表管"过程不重复、不遗漏"——hub 侧零契约变更：
+
+- **主键**：`doi:<doi>`；无 DOI 用 `title:<norm>`（标题小写去标点的 sha256 前 12 位）
+- **verdict**：`official / author_maintained / likely / none / unavailable`
+  - `none`（**终态**，永不再查）：仅两种确定性证据可判——`extract_repo_links`
+    全文无仓库链接（evidence 记"全文无仓库链接"）；或 repo 快照 0 个 .py 且
+    probe 通过。**LLM 不得判定 none**
+  - `unavailable`（**瞬态**，下次重查）：执行错误 / 证据冲突 / 哈希不匹配
+- **固化**：`paper_hash = sha256(key + title + verdict + repo_url + commit)[:12]`。
+  已固化（hash 匹配且 applied）的条目不再重复检索；audit 重算哈希不匹配 →
+  自动降级 `unavailable` 重查
+- 记录字段：key / title / verdict / repo_url / commit / paper_hash / evidence
+  （关键原文引用）/ applied / checked_at
 
 ### 工作区
 
 ```text
 .ingest/candidates/<slug>/       # gitignore
 ├── candidate.json               # 种子 + 解析结果 + 证据链 + 官方性判定（含 needs_review 原因）
-├── paper/  repo/  cache/        # PDF、剥 .git 快照、页面缓存
-├── staged/                      # README / CSV 行 / 例外块（apply 前的待落位产物）
+├── paper/  repo/  cache/        # PDF、剥 .git 快照、页面缓存、全文缓存
+├── staged/                      # README / CSV 行 / 双 README 片段 / 例外块（apply 前待落位产物）
 └── validation.json  report.md
+.ingest/ledger.jsonl             # 检索记录表（gitignore，见上节）
 ```
 
 ### 脚本职责要点
@@ -544,11 +589,14 @@ scripts:
 |---|---|
 | `scholar_lookup.py` | S2 Graph API；种子分流；元数据/openAccessPdf/作者信息 |
 | `search_arxiv.py` / `web_search.py` / `fetch_page.py` / `download_pdf.py` | 按抽象层模板实现（通道/限流/多源链） |
+| `extract_repo_links.py` | pypdf 全文提取；仓库域 URL 清单（github/gitlab/huggingface/zenodo/gitee）+ Code Availability 段落原文；全文落缓存；检索不出 → 确定性 none |
 | `github_search.py` | search / readme 互认 / tree 探针；`--probe` 内嵌官方性判定 |
 | `acquire_repo.py` | 三通道：① GitHub shallow clone + `git rev-parse HEAD`（40 位）+ 剥 .git + 子模块递归实化（失败置 `repo_needs_review` 不静默跳过）② HF 经 hf-mirror.com 排除权重 ③ sdist 兜底 `pip download --no-deps --no-binary :all:`（hash 记 `unavailable`）；env 注入代理 |
-| `format_entry.py` | 六行 bullet（verdict 决定措辞；无 commit 省略 commit 行）；CSV 三键查重 + QUOTE_MINIMAL；双 README 一次渲染两份（badge 计数=CSV 行数、venue 色值映射走 hubkit/schema）；gitignore 例外自动建议（hubkit/ignore_rules pathspec 模拟） |
-| `validate_entry.py` | 七条契约规则（复用 hubkit/validators），`--json` 报告 |
+| `format_entry.py` | candidate.json → staged 全套产物（六行 bullet 按 verdict 措辞、CSV 行三键查重、双 README 渲染、gitignore 例外建议），复用 hubkit 渲染纯函数 |
+| `validate_entry.py` | staged 产物临时拼接到 hub 副本跑七条规则（复用 hubkit/validators），不落位、`--json` 报告 |
 | `apply_entry.py` | 前置：validate 全绿 + `confirm=true`；staged 落位到 `single-cell-hub/single_cell_models/<Name>/` + 更新 models.csv + 双 README + gitignore 例外；打印人工 git 步骤 |
+| `ledger_update.py` | 检索记录表唯一写入方：登记 verdict / paper_hash / evidence；none 仅接受确定性证据 |
+| `audit_scan.py` | 检索记录表 × hub 交叉扫描：空列 / 哈希不匹配 / unavailable / applied=false；输出异常清单（只读） |
 
 ### 人工决策点实例化
 
@@ -559,10 +607,12 @@ scripts:
 | PDF 拿不到 | ask_user 给本地路径 | pending：`pdf_needs_manual` |
 | 壳仓库/子模块 | ask_user 确认子模块清单 | pending：`repo_needs_review` |
 | apply 落位前 | ask_user 确认 | **不落位**：staged 产物 + 验收单留待人工 |
+| audit 异常条目复核 | ask_user 逐条确认处置 | 重查后仍异常 → pending |
 
 **完成标准**：validate_entry 全绿（或 needs_human 状态明确且产物完整）；
-report.md 完整（证据链表、产物清单、人工 git 步骤）；hub 侧无半成品状态
-（staged 完整 / 已 apply / 明确 pending 三选一）。
+report.md 完整（证据链表、产物清单、人工 git 步骤）；ledger 一致——每个触碰过的
+论文四态之一（finalized+applied / none / unavailable / pending）；hub 侧无半成品
+状态（staged 完整 / 已 apply / 明确 pending 三选一）。
 
 ## task/optimize（hub 纯读方，零网络）
 
@@ -660,7 +710,6 @@ summary.md 聚合 20 模型状态矩阵 + token 消耗。
 | M2 ingest 端到端 | SKILL.md 编排 + LLM 搜索循环 + 降级路径 | 真实论文（arXiv ID）产出入库产物 + 验收单（不 commit） |
 | M3 optimize MVP | task/optimize 脚本 + SKILL.md，跑 UCE | transformed 树通过 L0/L1，report 完整 |
 | M4 批量与无人值守 | batch driver + pending 流程 | 20 模型批量状态矩阵；needs_human 项事后补跑闭环 |
-| M5 预留 | 全自动论文发现（task/discover） | 复用 M2 工具层 |
 
 ## 关键风险与兜底
 

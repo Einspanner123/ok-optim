@@ -1,0 +1,30 @@
+name: ingest
+description: 论文检索入库（discover 发现 / audit 复核），按 single-cell-hub 契约产出条目
+
+# INGEST_MODE 必填：discover（发现入库）| audit（复核已固化条目）
+required_env: [INGEST_MODE]
+
+optional_env:
+  - INGEST_SEED_URL        # 种子：doi:/arxiv:/URL/标题；audit 下为指定单点复核
+  - INGEST_MAX_NEW         # discover：单 run 新候选数量上限
+  - INGEST_YEAR_FROM       # discover：年份窗口下界（如 2024）
+  - INGEST_YEAR_TO         # discover：年份窗口上界（如 2025）
+  - INGEST_MODEL_NAME      # 条目名（缺省由 agent 从论文确定）
+  - INGEST_VENUE
+  - INGEST_YEAR
+  - INGEST_COMMIT
+
+scripts:
+  scholar_lookup:     {args: {seed: str, limit: int?}}
+  search_arxiv:       {args: {query: str, limit: int?}}
+  web_search:         {args: {query: str, limit: int?}}
+  github_search:      {args: {query: str, probe: bool?}}
+  fetch_page:         {args: {url: str, want: str?}}
+  download_pdf:       {args: {slug: str, paper_url: str}}
+  extract_repo_links: {args: {slug: str}}
+  acquire_repo:       {args: {slug: str, repo_url: str, commit: str?}}
+  format_entry:       {args: {slug: str}}
+  validate_entry:     {args: {slug: str}}
+  apply_entry:        {args: {slug: str, confirm: bool}}
+  ledger_update:      {args: {slug: str, verdict: str, evidence: str?}}
+  audit_scan:         {args: {key: str?}}
