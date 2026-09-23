@@ -15,5 +15,8 @@ wheels/
 # agent runtime state
 .env
 agent/runtime/
+agent/vendor/*
+!agent/vendor/package.json
+!agent/vendor/package-lock.json
 runs/
 .ingest/

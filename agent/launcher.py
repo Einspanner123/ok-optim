@@ -15,14 +15,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import shutil
 import subprocess
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 
-from agent import assembly, envguard, journal
+from agent import assembly, bootstrap, envguard, journal
 from agent.assembly import PreflightError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -31,21 +30,14 @@ EXIT_NEEDS_HUMAN = 2
 EXIT_FATAL = 3
 
 
-def find_pi() -> str:
-    """定位 pi 可执行文件。"""
-    pi = shutil.which("pi")
-    if pi:
-        return pi
-    for candidate in (
-        Path.home() / ".local" / "bin" / "pi",
-        Path("/root/.local/bin/pi"),
-    ):
-        if candidate.is_file():
-            return str(candidate)
-    raise SystemExit(
-        "pi 未安装。安装: npm install -g --ignore-scripts @earendil-works/pi-coding-agent "
-        "(npmmirror: --registry=https://registry.npmmirror.com)"
-    )
+def find_pi() -> tuple[str, str]:
+    """定位 vendor pi runtime，返回 [node, cli.js]。不依赖全局安装与 PATH。"""
+    try:
+        return bootstrap.pi_runtime()
+    except SystemExit as exc:
+        raise SystemExit(
+            f"{exc}（pi 不走全局安装，由 agent/vendor 自包含提供）"
+        )
 
 
 def parse_set(items: list[str] | None) -> dict[str, str]:
@@ -151,7 +143,7 @@ def render_event(event: dict, out) -> None:
         print("[retry] 瞬时错误，自动重试...")
 
 
-def run_pi_json(pi_bin: str, cmd: list[str], env: dict[str, str], run_dir: Path) -> int:
+def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path) -> int:
     """非交互: pi -p --mode json，逐行转发渲染 + 原始事件落盘。"""
     events_path = run_dir / "events.jsonl"
     with events_path.open("w", encoding="utf-8") as sink, subprocess.Popen(
@@ -196,7 +188,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = assembly.make_run_dir(task, slug, ts)
 
-    pi_bin = find_pi()
+    node_bin, pi_entry = find_pi()
     agent_dir = REPO_ROOT / "agent" / "runtime"
     agent_vars = {
         "AGENT_TASK": task,
@@ -204,14 +196,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         "AGENT_RUN_DIR": str(run_dir),
         "AGENT_INTERACTIVE": "1" if interactive else "0",
         "PI_CODING_AGENT_DIR": str(agent_dir),
+        # 禁直跑令牌: bootstrap-guard 校验，缺它 pi 拒绝启动
+        "AGENT_INVOKED_BY_LAUNCHER": uuid.uuid4().hex,
     }
 
     env = envguard.build_snapshot(dotenv, overrides, agent_vars)
 
     try:
-        # preflight（required_env + skills symlink）在快照构造后执行
+        # preflight（required_env）在快照构造后执行
         assembly.preflight(task, env)
         assembly.render_models_json(env)
+        assembly.render_guard()
     except PreflightError as exc:
         print(f"[preflight] {exc}", file=sys.stderr)
         return EXIT_FATAL
@@ -234,18 +229,18 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     if interactive:
         # 交互模式: pi TUI 接管终端（ask_user 可用）
-        cmd = [pi_bin, *common_args, prompt]
+        cmd = [node_bin, pi_entry, *common_args, prompt]
         code = subprocess.call(cmd, env=env, cwd=str(REPO_ROOT))
         summary = journal.finalize(run_dir, task, slug, code, interactive=True)
         journal.print_summary(summary, run_dir)
         return EXIT_OK if code == 0 else EXIT_FATAL
 
     # 非交互: json 事件流模式
-    cmd = [pi_bin, "-p", "--mode", "json", *common_args, prompt]
-    print(f"[launcher] pi = {pi_bin}")
+    cmd = [node_bin, pi_entry, "-p", "--mode", "json", *common_args, prompt]
+    print(f"[launcher] pi = {pi_entry} (vendor, node {bootstrap.NODE_VERSION})")
     print(f"[launcher] task={task} slug={slug} model=ok-llm/{model_id}")
     print(f"[launcher] run_dir={run_dir}\n")
-    code = run_pi_json(pi_bin, cmd, env, run_dir)
+    code = run_pi_json(cmd, env, run_dir)
     summary = journal.finalize(run_dir, task, slug, code, interactive=False)
     journal.print_summary(summary, run_dir)
     return EXIT_OK if code == 0 else EXIT_FATAL
@@ -311,9 +306,12 @@ def main() -> None:
     p_status = sub.add_parser("status", help="查看运行记录")
     p_status.set_defaults(func=cmd_status)
 
+    p_setup = sub.add_parser("setup", help="一键安装 pi runtime（幂等）")
+    p_setup.set_defaults(func=lambda _args: (bootstrap.main() or EXIT_OK))
+
     # 简写兼容: 首参数不是子命令时按 run 处理（uv run ok --task hello ≡ ok run --task hello）
     argv = sys.argv[1:]
-    if argv and argv[0] not in {"run", "batch", "pending", "status"}:
+    if argv and argv[0] not in {"run", "batch", "pending", "status", "setup"}:
         argv = ["run", *argv]
 
     args = parser.parse_args(argv)

@@ -113,6 +113,16 @@ def render_models_json(env: dict[str, str]) -> Path:
     return models_path
 
 
+def render_guard() -> Path:
+    """复制禁直跑守卫到 runtime/extensions/（PI_CODING_AGENT_DIR 全局扩展位，必加载）。"""
+    src = REPO_ROOT / "agent" / "extensions" / "bootstrap-guard.ts"
+    dst_dir = REPO_ROOT / "agent" / "runtime" / "extensions"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / src.name
+    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    return dst
+
+
 def make_run_dir(task: str, slug: str, ts: str) -> Path:
     run_dir = REPO_ROOT / "runs" / ts / task / slug
     run_dir.mkdir(parents=True, exist_ok=True)

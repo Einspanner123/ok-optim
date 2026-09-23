@@ -1,0 +1,11 @@
+{
+  "name": "ok-optim-agent-vendor",
+  "private": true,
+  "description": "Pinned pi runtime, installed by agent/bootstrap.py (uv run ok setup). Do not edit versions casually.",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.87.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}
