@@ -60,7 +60,14 @@ ok-optim-agent/
 │   └── runtime/                   # PI_CODING_AGENT_DIR（gitignore）：
 │       ├── models.json            #   assembly 每次启动渲染
 │       └── extensions/bootstrap-guard.ts  # 全局扩展位，必加载
-├── task/                          # ══ 任务层：按 Part II 抽象实例化 ══
+├── hubkit/                        # ══ 可执行契约库：hub 契约的代码化身（schema/读/校验）══
+│   ├── schema.py                  # CSV 列定义、键约束、措辞规则、venue 映射、徽章体系
+│   ├── readers.py                 # 读接口：models.csv / 模型 README / 双 README 名单
+│   ├── validators.py              # 七条契约规则 + 孤儿检查（ingest/optimize 共用）
+│   └── ignore_rules.py            # gitignore 安全模拟、例外块建议
+├── task/                          # ══ 任务层：按 Part II 抽象实例化（标准结构见 task/_template）══
+│   ├── _template/                 # skill 标准结构模板：skill.yaml / SKILL.md / scripts 骨架
+│   ├── hello/                     # M0 验收任务
 │   ├── ingest/                    # 任务①（hub 唯一写入方）→ 实例化见 Part III
 │   └── optimize/                  # 任务②（hub 纯读方）→ 实例化见 Part III
 ├── docs/
@@ -69,13 +76,13 @@ ok-optim-agent/
 └── single-cell-hub/               # 子模块数据集：只读；唯一写入口是 task 脚本的 apply 类操作
 ```
 
-`task/<name>/` 标准结构（Part II「任务通用契约」定义）：
+`task/<name>/` 标准结构（Part II「任务通用契约」定义；模板与新建清单见 `task/_template/README.md`）：
 
 ```text
 task/<name>/
 ├── skill.yaml         # 元数据：name / description / required_env / optional_env / scripts 清单（含参数 schema）
 ├── SKILL.md           # skill 设计（Agent Skills 标准格式）：流程、工具用法、边界、何时问人、完成标准
-├── docs/              # 任务专属知识（语料笔记等）
+├── references/        # 任务专属知识（语料笔记等；Agent Skills 标准可选目录名）
 └── scripts/           # 确定性 py 脚本，可独立执行与单测
 ```
 
@@ -144,7 +151,7 @@ pi 默认给模型四个工具（read/write/edit/bash）+ 我们的扩展。全�
 | `ask_user(question, options)` | `ask-user.ts` 注册；仅交互模式可用 |
 | slash `/skill:<name>` | pi 原生技能入口，SKILL.md 即任务说明书 |
 
-## 沙盒：三层防护
+## 权限边界：三层约束（不等同于 OS 沙盒）
 
 机制澄清：agent 在 bash 里 `export` 只影响它自己的子进程，**天然污染不到启动器注入的配置**。
 真正要防的是持久化篡改与越权写盘：
@@ -202,16 +209,18 @@ ingest 侧），纯读方（optimize）按它读取、读错即报，不需要�
 
 ## 任务通用契约
 
-所有任务（含未来 task/discover）共用：
+所有任务（含未来 task/discover）共用（标准结构模板：`task/_template/`）：
 
 - **skill.yaml**：`name` / `description` / `required_env` / `optional_env` /
-  `scripts`（脚本名 → 参数 JSON Schema，供 path-guard 校验 bash 调用与 argparse 对齐）
+  `scripts`（脚本名 → 参数说明；path-guard 校验脚本声明，参数语义由 argparse 校验）
 - **SKILL.md**（Agent Skills 标准）：目标 → 流程步骤 → 工具用法 → 边界与禁止事项 →
   何时问人 → 完成标准（Done 的定义）
 - **scripts 规范**：
   - argparse CLI；`--json` 输出机器可读结果
   - exit code 语义：`0` 成功 / `2` needs_human（附原因）/ `3` fatal
-  - 不 import agent/ 内核、不跨任务 import——可独立执行与单测
+  - 不 import agent/ 内核、任务之间互不 import；**契约级逻辑一律上收顶层
+    `hubkit/` 包**（schema 常量 / hub 读接口 / 校验器 / 渲染纯函数），任务脚本
+    退化为薄壳（参数解析、exit code、runs/ 落盘、网络限流与缓存）
   - 网络类脚本内建限流与缓存（各通道额度见「检索接口抽象」）
   - stdout 预算：超长输出截断（摘要 ≤4k chars），全文落 `runs/` 供 read 追查
 - **工作区**：`runs/<ts>/<task>/<slug>/`（state.json 断点续跑 + 产物目录）；
@@ -220,7 +229,9 @@ ingest 侧），纯读方（optimize）按它读取、读错即报，不需要�
 ## hub 契约（格式事实源）
 
 > 本节是 `single-cell-hub` 的**唯一格式事实源**：ingest（写入方）按它生成产物并
-> 自证合规，optimize（纯读方）按它读取。契约变更：人工编辑本节 → 两侧实现各自
+> 自证合规，optimize（纯读方）按它读取。**可执行化身是顶层 `hubkit/` 包**
+> （schema.py / readers.py / validators.py / ignore_rules.py）——两侧共用同一实现，
+> 从机制上杜绝契约分叉。契约变更：人工编辑本节 → 同步 hubkit/ → 两侧实现各自
 > 跟进 → `validate_hub.py --hub` 全量回归。
 
 ### 仓库顶层布局
@@ -371,7 +382,7 @@ hub 根 `.gitignore` 按扩展名大类忽略（csv/h5ad/权重/压缩包/notebo
 - 存量先例：Geneformer `*.pkl/*.ipynb`、scPRINT `*.ipynb`（GenePT 事故：代码文件
   被吞且无人察觉——本规则为直接防线）
 
-### 七条契约校验规则（实现：task/ingest/scripts/validate_hub.py）
+### 七条契约校验规则（可执行实现：hubkit/validators.py；CLI 入口：task/ingest/scripts/validate_hub.py）
 
 | 规则名 | 内容 | 失败处置 |
 |---|---|---|
@@ -390,9 +401,9 @@ hub 根 `.gitignore` 按扩展名大类忽略（csv/h5ad/权重/压缩包/notebo
 
 | 角色 | 权限 | 实现 |
 |---|---|---|
-| ingest | 唯一写入方（apply_entry：新模型目录 + CSV 行 + 双 README + gitignore 例外） | `task/ingest/scripts/`，按本节实现并自证合规 |
-| optimize | 纯读方 | `task/optimize/scripts/`，按本节读取；读失败报错，不校验不回写 |
-| 人工 | 契约变更 + git commit | 修改本节 → 通知两侧跟进 → 全量回归 |
+| ingest | 唯一写入方（apply_entry：新模型目录 + CSV 行 + 双 README + gitignore 例外） | `task/ingest/scripts/`（薄壳 CLI + 落位），校验/渲染共用 hubkit/ |
+| optimize | 纯读方 | `task/optimize/scripts/`，经 hubkit/readers 读取；读失败报错，不校验不回写 |
+| 人工 | 契约变更 + git commit | 修改本节 → 同步 hubkit/ → 通知两侧跟进 → 全量回归 |
 
 ## 检索接口抽象（网络型任务共用）
 
@@ -535,8 +546,8 @@ scripts:
 | `search_arxiv.py` / `web_search.py` / `fetch_page.py` / `download_pdf.py` | 按抽象层模板实现（通道/限流/多源链） |
 | `github_search.py` | search / readme 互认 / tree 探针；`--probe` 内嵌官方性判定 |
 | `acquire_repo.py` | 三通道：① GitHub shallow clone + `git rev-parse HEAD`（40 位）+ 剥 .git + 子模块递归实化（失败置 `repo_needs_review` 不静默跳过）② HF 经 hf-mirror.com 排除权重 ③ sdist 兜底 `pip download --no-deps --no-binary :all:`（hash 记 `unavailable`）；env 注入代理 |
-| `format_entry.py` | 六行 bullet（verdict 决定措辞；无 commit 省略 commit 行）；CSV 三键查重 + QUOTE_MINIMAL；双 README 一次渲染两份（badge 计数=CSV 行数、venue 色值映射）；gitignore 例外自动建议（pathspec 模拟） |
-| `validate_entry.py` | 七条契约规则（与 validate_hub.py 共用实现），`--json` 报告 |
+| `format_entry.py` | 六行 bullet（verdict 决定措辞；无 commit 省略 commit 行）；CSV 三键查重 + QUOTE_MINIMAL；双 README 一次渲染两份（badge 计数=CSV 行数、venue 色值映射走 hubkit/schema）；gitignore 例外自动建议（hubkit/ignore_rules pathspec 模拟） |
+| `validate_entry.py` | 七条契约规则（复用 hubkit/validators），`--json` 报告 |
 | `apply_entry.py` | 前置：validate 全绿 + `confirm=true`；staged 落位到 `single-cell-hub/single_cell_models/<Name>/` + 更新 models.csv + 双 README + gitignore 例外；打印人工 git 步骤 |
 
 ### 人工决策点实例化
@@ -657,9 +668,9 @@ summary.md 聚合 20 模型状态矩阵 + token 消耗。
 |---|---|
 | pi 版本演进破坏扩展 API | 精确 pin 版本；扩展仅三个小文件，逻辑尽量留在 agent/ py 层；SKILL.md 标准保证 task 层可平移（dsh 备选） |
 | npm 安装网络问题 | npmmirror 镜像 + SHA256 锁定；或离线分发 node_modules |
-| LLM 幻觉脚本参数 | path-guard 按 skill.yaml 的参数 schema 校验 bash 命令 + 脚本自身 argparse 严格模式 |
+| LLM 幻觉脚本参数 | path-guard 校验命令结构与 skill.yaml 脚本声明；参数语义由脚本 argparse 严格校验 |
 | agent 越界改文件 | write/edit 默认拒绝；bash 白名单；三层沙盒 |
-| 抽象与实现偏移 | 本文单文档主线；下游实现不得违背 Part II；validate_hub 全量回归守护 hub 契约 |
+| 抽象与实现偏移 | 本文单文档主线 + hubkit/ 可执行契约库（写入方/读方共用同一实现）；下游实现不得违背 Part II；validate_hub 全量回归守护 hub 契约 |
 | 脚本输出撑爆上下文 | 分发层截断 + 全文落 runs/ 供 read 追查 |
 | 端点不返回 reasoning_content | json 模式事件流天然兼容：有则显示思考块，无则只显示 content + tool calls |
 | token 成本失控 | skill 渐进披露不破坏 prompt cache；batch 串行 + usage 记账 + 每任务预算上限（超限终止记 needs_human） |
@@ -674,3 +685,58 @@ summary.md 聚合 20 模型状态矩阵 + token 消耗。
    （目录三件套 / CSV 行 / 双 README diff / 验收单）
 4. M3：`run --task optimize --set OPTIMIZE_MODEL_NAME=UCE` L0/L1 通过、报告完整
 5. M4：batch 中断重跑，断点续跑正常；pending 补跑闭环
+
+## 已实现修订：权限与完成判定（2026-09-23）
+
+本节描述当前已实现行为，优先于上文尚未落地的里程碑设计。
+
+### 工具执行边界
+
+- launcher 关闭 extension 自动发现，仅显式加载 bootstrap-guard、path-guard、ask-user；工具限定 read/bash/ask_user。
+- bash 保留命令输入形式，但由 literal tokenizer 解析为 argv，最终 subprocess 使用 shell=false。
+  `uv run python task/<task>/scripts/<script>.py` 仅允许当前 skill.yaml 已声明的脚本；
+  实际执行项目现有 .venv/bin/python（-B -E -s），不调用 uv 同步或安装环境。
+- ls/cat/head/tail/wc 的选项逐项受限，目标必须通过 realpath 和完整路径边界检查；
+  ls 可列项目根目录，读取文件仍限于 READ_DIRS/READ_FILES。不允许符号链接越界、目录同名前缀越界。
+- git 仅开放 status 及显示选项，并关闭 fsmonitor/hook；其他 git 操作由人工在工具面外执行。
+- shell 控制符、变量展开、通配符、未声明工具/脚本默认拒绝；不再继承提供商凭据和运行时加载器变量。
+  任务脚本仅收到必要系统变量、运行身份及 skill 声明的任务参数。
+- 这属于 harness 权限约束。已声明 Python 脚本仍是可信代码，尚无 OS 级第三方代码隔离；
+  optimize 将来执行模型代码时，必须另行实现隔离策略，不能把路径防护当作代码沙盒。
+
+### 任务结果协议与退出码
+
+每次运行使用唯一 run_id 和独立目录。最终确定性业务脚本原子写入
+`$AGENT_RUN_DIR/task_result.json`，不能由模型文字总结替代：
+
+```json
+{
+  "version": 1,
+  "run_id": "<AGENT_RUN_ID>",
+  "task": "hello",
+  "slug": "hello",
+  "status": "done",
+  "validation_status": "passed",
+  "checks": [{"name": "hello_script", "status": "passed"}],
+  "reason": "hello script completed and produced its environment snapshot"
+}
+```
+
+- status: done / done_with_warnings / needs_human / failed / skipped_incomplete。
+- validation_status: passed / warnings / failed / skipped；checks 含 name 与 passed/failed/skipped 状态。
+- done 要求 checks 非空且全部 passed；done_with_warnings 不得包含 failed。
+- journal 校验版本与 task/slug/run_id。缺结果视为 incomplete；身份不符、格式损坏视为 invalid_result。
+- journal 分别记录 runtime_status、task_status、validation_status 和最终 status/exit_code。
+- 非交互模式解析 events；交互模式解析真实 session，定位 session 链接并汇总工具调用与 usage。
+  同次运行只消费一种消息来源，避免 events/session 双重计数。
+- pi 非零退出、LLM error/aborted、审计不完整优先于业务成功；会话必须正常收尾。
+- CLI: done/done_with_warnings → 0；needs_human/incomplete/skipped_incomplete → 2；
+  failed、运行/审计/结果错误 → 3。pi 退出 0 不再自动代表成功。
+- hello 已接入协议；其他任务在实现终态脚本时必须接入。历史 journal 不会自动重写。
+
+回归验证（使用现有依赖）：
+
+```bash
+.venv/bin/python -B -m unittest discover -s tests -v
+agent/vendor/node-v22.23.2-linux-arm64/bin/node --experimental-strip-types --test tests/test_policy.mjs
+```
