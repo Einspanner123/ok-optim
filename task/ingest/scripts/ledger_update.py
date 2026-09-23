@@ -15,7 +15,7 @@ import sys
 
 from _ingest import (
     NONE_EVIDENCE_MARKERS, IngestError, _stdio_json, append_ledger,
-    ledger_key, load_candidate, paper_hash,
+    ledger_key, load_candidate_raw, paper_hash,
 )
 
 
@@ -32,7 +32,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        cand = load_candidate(args.slug)
+        cand = load_candidate_raw(args.slug)
     except IngestError as exc:
         print(f"needs_human: {exc}", file=sys.stderr)
         return 2

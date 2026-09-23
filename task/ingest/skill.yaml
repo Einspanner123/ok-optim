@@ -18,7 +18,7 @@ scripts:
   scholar_lookup:     {args: {seed: str, limit: int?}}
   search_arxiv:       {args: {query: str, limit: int?}}
   web_search:         {args: {query: str, limit: int?}}
-  github_search:      {args: {query: str, probe: bool?}}
+  github_search:      {args: {query: str, probe: bool?, slug: str?}}
   fetch_page:         {args: {url: str, want: str?}}
   download_pdf:       {args: {slug: str, paper_url: str}}
   extract_repo_links: {args: {slug: str}}

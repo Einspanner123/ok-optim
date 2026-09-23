@@ -49,11 +49,19 @@ def candidate_dir(slug: str) -> Path:
     return candidates_root() / slug
 
 
-def load_candidate(slug: str) -> dict:
+def load_candidate_raw(slug: str) -> dict:
+    """宽松版：网络/取证阶段（verdict 未定）用，仅要求 slug 与基本字段存在。"""
     path = candidate_dir(slug) / "candidate.json"
     if not path.is_file():
         raise IngestError(f"candidate.json 不存在: {path}")
     cand = json.loads(path.read_text(encoding="utf-8"))
+    cand.setdefault("slug", slug)
+    return cand
+
+
+def load_candidate(slug: str) -> dict:
+    """严格版：format/apply 阶段用——要求 verdict 已定且可入库。"""
+    cand = load_candidate_raw(slug)
     missing = [f for f in REQUIRED_FIELDS if not cand.get(f)]
     if missing:
         raise IngestError(f"candidate.json 缺少必填字段: {missing}")
@@ -260,5 +268,6 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _stdio_json(payload: dict) -> None:
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+def _stdio_json(payload: dict, as_json: bool = True) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2 if as_json else None)
+          if as_json else json.dumps(payload, ensure_ascii=False)[:4000])

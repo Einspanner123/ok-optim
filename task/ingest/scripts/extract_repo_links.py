@@ -14,7 +14,7 @@ import re
 import sys
 from pathlib import Path
 
-from _ingest import IngestError, _stdio_json, candidate_dir, load_candidate
+from _ingest import IngestError, _stdio_json, candidate_dir, load_candidate_raw
 
 REPO_HOSTS = (r"github\.com", r"gitlab\.com", r"huggingface\.co",
               r"zenodo\.org", r"gitee\.com")
@@ -57,7 +57,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        cand = load_candidate(args.slug)
+        cand = load_candidate_raw(args.slug)
     except IngestError as exc:
         print(f"needs_human: {exc}", file=sys.stderr)
         return 2
