@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import platform
 import shutil
@@ -25,6 +26,11 @@ VENDOR_DIR = REPO_ROOT / "agent" / "vendor"
 NODE_VERSION = "v22.23.2"
 PI_VERSION = "0.87.0"
 NODE_MIRROR = f"https://registry.npmmirror.com/-/binary/node/{NODE_VERSION}"
+# 供应链锁定：官方 SHASUMS256.txt（nodejs.org/dist 与 npmmirror 双源核对一致）
+NODE_SHA256 = {
+    "x64": "b294a556e639d64338823920e5866c21c02741742d2e1529ee1a225c1ec9252a",
+    "arm64": "013b59cfd2819703a6f4a14ab891fc46fc2a4e3f5bcd92de3fb4929b43e35b30",
+}
 
 
 def _arch() -> str:
@@ -75,6 +81,13 @@ def ensure_node() -> Path:
     VENDOR_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[setup] 下载 node {NODE_VERSION} ({arch}) ...")
     urllib.request.urlretrieve(url, tarball)
+    digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
+    if digest != NODE_SHA256[arch]:
+        tarball.unlink()
+        raise SystemExit(
+            f"node tarball SHA256 不符，拒绝安装！\n  期望: {NODE_SHA256[arch]}\n  实际: {digest}"
+        )
+    print(f"[setup] sha256 校验通过: {digest[:16]}...")
     print("[setup] 解压 ...")
     with tarfile.open(tarball) as tf:
         tf.extractall(VENDOR_DIR)  # noqa: S202 - 受控目录
