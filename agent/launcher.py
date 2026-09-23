@@ -206,6 +206,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     slug = resolve_slug(task, overrides, dotenv)
     run_id = uuid.uuid4().hex
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    # 项目 venv 是 agent 全部 bash 子进程的默认 python 环境（启动时自动注入，
+    # argv 受控下 agent 无法自行 source）；缺失即拒绝启动，不代装
+    venv = REPO_ROOT / ".venv"
+    if not (venv / "bin" / "python").exists():
+        print("[preflight] 项目 .venv 不存在或缺少 python，请先运行: uv sync",
+              file=sys.stderr)
+        return EXIT_FATAL
+
     try:
         run_dir = assembly.make_run_dir(task, slug, ts)
     except PreflightError as exc:
@@ -228,7 +237,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "AGENT_INVOKED_BY_LAUNCHER": uuid.uuid4().hex,
     }
 
-    env = envguard.build_snapshot(dotenv, overrides, agent_vars)
+    env = envguard.build_snapshot(dotenv, overrides, agent_vars, venv=venv)
 
     try:
         # preflight（required_env）在快照构造后执行

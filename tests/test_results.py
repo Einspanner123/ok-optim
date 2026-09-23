@@ -157,6 +157,9 @@ class ResultTests(unittest.TestCase):
 
     def test_launcher_returns_business_exit_not_pi_exit(self):
         (self.root / "task/hello").mkdir(parents=True)
+        # venv preflight 契约: launcher 要求 REPO_ROOT/.venv/bin/python 存在
+        (self.root / ".venv/bin").mkdir(parents=True)
+        (self.root / ".venv/bin/python").write_text("", encoding="utf-8")
         spec = assembly.SkillSpec("hello", "", [], ["FOO"], {"hello": {"args": {}}})
         args = argparse.Namespace(task="hello", set=[], no_interactive=True)
         for outcome, expected in [("error", 3), ("needs_human", 2), ("done", 0)]:

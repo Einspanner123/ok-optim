@@ -75,11 +75,15 @@ def build_snapshot(
     dotenv: dict[str, str],
     overrides: dict[str, str],
     agent_vars: dict[str, str],
+    venv: Path | None = None,
 ) -> dict[str, str]:
     """构造白名单 env 快照。
 
     优先级：overrides（--set）> .env > 父进程环境。
     overrides 中的任务参数键（如 FOO）不在白名单也放行——这是任务注入通道。
+    venv 非空时注入项目虚拟环境（等效 source activate，但对 pi 全部
+    bash 子孙进程生效）：VIRTUAL_ENV 指向 venv，PATH 前置 venv/bin。
+    NPU 双环境隔离不受影响——NPU_PYTHON 是绝对路径 subprocess，不经 PATH。
     """
     env: dict[str, str] = {}
     for key in BASE_VARS:
@@ -95,4 +99,7 @@ def build_snapshot(
     env.update(overrides)
     # launcher 运行时变量
     env.update(agent_vars)
+    if venv is not None:
+        env["VIRTUAL_ENV"] = str(venv)
+        env["PATH"] = str(venv / "bin") + os.pathsep + env.get("PATH", "")
     return env

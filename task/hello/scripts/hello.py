@@ -34,6 +34,7 @@ def main() -> int:
             "AGENT_RUN_DIR": os.environ.get("AGENT_RUN_DIR"),
         },
         "python": sys.version.split()[0],
+        "python_executable": sys.executable,
         "cwd": os.getcwd(),
         "echo": args.echo,
     }
@@ -63,6 +64,7 @@ def main() -> int:
         for key, val in payload["env"].items():
             print(f"{key} = {val}")
         print(f"python = {payload['python']}")
+        print(f"python_executable = {payload['python_executable']}")
         print(f"cwd = {payload['cwd']}")
         if args.echo:
             print(f"echo = {args.echo}")
