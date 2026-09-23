@@ -1,7 +1,7 @@
 """launcher: 启动器 CLI。
 
 用法:
-    uv run python main.py run --task hello --set FOO=bar [--no-interactive]
+    uv run python main.py run --task hello --set FOO=bar [--interactive]
     uv run python main.py batch ...   (M4)
     uv run python main.py pending     (M4)
     uv run python main.py status      (M4)
@@ -195,7 +195,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     overrides = parse_set(args.set)
     dotenv = envguard.load_env_file(REPO_ROOT / ".env")
 
-    interactive = (not args.no_interactive) and sys.stdout.isatty()
+    interactive = args.interactive and sys.stdout.isatty()
+    if args.interactive and not sys.stdout.isatty():
+        print("[mode] stdout 非 TTY，--interactive 降级为非交互", file=sys.stderr)
 
     try:
         spec = assembly.load_skill(task)
@@ -332,8 +334,8 @@ def main() -> None:
         help="注入环境变量（可多次）",
     )
     p_run.add_argument(
-        "--no-interactive", action="store_true",
-        help="禁用交互（ask_user 降级为 needs_human 分支）",
+        "--interactive", action="store_true",
+        help="交互模式（TUI；默认非交互，ask_user 降级为 needs_human 分支）",
     )
     p_run.set_defaults(func=cmd_run)
 

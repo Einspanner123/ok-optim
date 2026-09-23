@@ -23,7 +23,7 @@
 | 决策点 | 选择 | 理由 |
 |---|---|---|
 | Agent runtime | **pi**（pi.dev，`@earendil-works/pi-coding-agent`） | 极简可控；OpenAI 兼容 endpoint 一等支持（models.json）；扩展用 `--skill`/`-e` 显式装配（不用 `.pi/` 项目目录）；`--mode json`/RPC 便于启动器接管；session 单文件可回放 |
-| 任务参数注入 | **混合分工** | 启动参数经 env/CLI 注入（确定性、可批处理）；运行中例外升级用 `ask_user` 交互工具；`--no-interactive` / batch 模式降级为 needs_human 记录 |
+| 任务参数注入 | **混合分工** | 启动参数经 env/CLI 注入（确定性、可批处理）；运行中例外升级用 `ask_user` 交互工具；非交互（默认）/ batch 模式降级为 needs_human 记录 |
 | task 可移植性 | **SKILL.md 开放标准**（agentskills.io） | `task/` 设计框架无关；pi 若未来不满足（或 dsh 成熟），harness 可替换，task 层平移 |
 | git 提交 | **人工执行**（延续） | agent 只准备产物 + 校验 + 验收单 |
 | 沙盒 | 启动器 env 白名单 + pi extension 路径防护 + 脚本层校验 三层 | 见「沙盒」节 |
@@ -91,7 +91,7 @@ task/<name>/
 ```bash
 uv sync && uv run ok setup    # 全新 clone：两步完成环境准备
 uv run ok setup               # 安装/修复 pi runtime（幂等）
-uv run ok run --task <t> [--set K=V ...] [--no-interactive]   # 单次任务（run 可省略）
+uv run ok run --task <t> [--set K=V ...] [--interactive]   # 单次任务（run 可省略；默认非交互）
 uv run ok status              # 历史运行记录（journal 汇总）
 uv run ok batch ...           # 批量（M4）
 uv run ok pending             # 待人工项（M4）
@@ -130,7 +130,7 @@ uv run ok pending             # 待人工项（M4）
 
 | 场景 | 模式 | 说明 |
 |---|---|---|
-| 人工值守调试 | launcher 交互模式（TUI） | `uv run ok run --task <t>`（TTY 自动进交互）；pi 由 launcher 显式装配（`--skill` + `-e`），ask_user 可用 |
+| 人工值守调试 | launcher 交互模式（TUI） | `uv run ok run --task <t> --interactive`；pi 由 launcher 显式装配（`--skill` + `-e`），ask_user 可用 |
 | 启动器单次任务 | `pi -p --mode json` | launcher 拉起，逐事件流式转发渲染到 stdout（思考 + 工具调用 + 结果） |
 | 批处理 | launcher 循环逐模型拉起 | 每模型独立 session（`--name <task>/<slug>`），读 state 跳过已完成 |
 
@@ -193,15 +193,15 @@ ingest 侧），纯读方（optimize）按它读取、读错即报，不需要�
 ## 交互模型（混合分工）
 
 - **启动时注入（确定性）**：
-  - `uv run ok run --task ingest --set INGEST_SEED_URL=arxiv:xxxx [--no-interactive]`
+  - `uv run ok run --task ingest --set INGEST_SEED_URL=arxiv:xxxx`（默认非交互）
   - `uv run ok run --task optimize --set OPTIMIZE_MODEL_NAME=UCE`
   - `--set K=V` 进 env 快照；launcher 组装首条任务指令（任务名 + 参数说明 + 指向 SKILL.md）注入 pi
 - **运行中升级（ask_user）**：agent 无法从 env 得知的裁决点——官方性存疑确认、
   多候选仓库二选一、PDF/repo 人工兜底、apply 前确认
-- **无人值守降级**：`--no-interactive` 或 batch 模式下 ask_user 返回 `NOT_INTERACTIVE`，
+- **无人值守降级**：默认非交互或 batch 模式下 ask_user 返回 `NOT_INTERACTIVE`，
   agent 按各任务 SKILL.md 约定改走 needs_human 分支（写 `pending.json` + 安全收尾），
   事后 `uv run ok pending` 列出待人工项，处理后重跑
-- 默认值：`run` 且 stdout 为 TTY → 交互模式；`batch` → 恒为 no-interactive
+- 默认值：`run` → 非交互，显式 `--interactive` 且 stdout 为 TTY 才进 TUI；`batch` → 恒为非交互
 
 ---
 
@@ -552,7 +552,7 @@ scripts:
 
 ### 人工决策点实例化
 
-| 决策点 | 交互模式 | no-interactive |
+| 决策点 | 交互模式（--interactive） | 非交互（默认） |
 |---|---|---|
 | 官方性 `likely` | ask_user 确认或否决 | pending：`official_needs_review`，候选冻结 |
 | 多候选仓库 | ask_user 列选项 | pending：列出候选 + 各自证据 |
@@ -627,7 +627,7 @@ state.json       # 状态机 + 断点续跑
 
 ### 人工决策点实例化
 
-| 决策点 | 交互模式 | no-interactive |
+| 决策点 | 交互模式（--interactive） | 非交互（默认） |
 |---|---|---|
 | 计划含高风险 drop/stub | ask_user 确认 | pending：降级为保守计划（不 drop，仅标注） |
 | L1 stub 注入仍失败 | ask_user 选择继续/终止 | 记 `failed`，报告说明 |
