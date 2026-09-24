@@ -162,7 +162,7 @@ class ResultTests(unittest.TestCase):
         (self.root / ".venv/bin/python").write_text("", encoding="utf-8")
         spec = assembly.SkillSpec("hello", "", [], ["FOO"], {"hello": {"args": {}}})
         args = argparse.Namespace(task="hello", set=[], interactive=False,
-                                  output="quiet")
+                                  output="quiet", tool_budget=60, timeout=1800)
         for outcome, expected in [("error", 3), ("needs_human", 2), ("done", 0)]:
             def fake_pi(cmd, env, run_dir, renderer, _outcome=outcome):
                 self.evidence(stop="error" if outcome == "error" else "stop")
