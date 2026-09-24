@@ -119,7 +119,10 @@ uv run ok pending             # 待人工项（M4）
 
 - `models.json` 声明自定义 provider（`api: "openai-completions"`，`baseUrl`/`apiKey` 从 env 读取）
 - `.env`：`OPENAI_BASE_URL` / `OPENAI_API_KEY` / `AGENT_LLM_MODEL`
-- 解码参数冻结：temperature 0 / top_p 1（seed 42 若 provider 透传则配置）——同事流水线既有口径
+- 采样参数（2026-09-24 修订）：temperature 0.2 / top_p 0.95。原冻结口径
+  temperature 0（贪心，为一致性）在长会话实测触发重复退化（vLLM 部署，
+  三次 run 均以重复文本循环失控告终）；微升温抑制循环，repetition_penalty 1.1
+  由引擎侧 generation_config 提供
 
 ### Skills 装配
 

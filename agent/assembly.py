@@ -101,8 +101,10 @@ def render_models_json(env: dict[str, str]) -> Path:
                 "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
                 "contextWindow": 128000,
                 "maxTokens": 16384,
-                # 解码参数冻结：temperature 0 / top_p 1
-                "samplingParams": {"temperature": 0, "top_p": 1},
+                # 采样参数（2026-09-24 口径）：temperature 0 贪心在长会话触发
+                # 重复退化（"Let me try" ×26），升温 0.2 + top_p 0.95 抑制；
+                # repetition_penalty 由 vLLM 引擎侧 generation_config 提供
+                "samplingParams": {"temperature": 0.2, "top_p": 0.95},
             }
         ],
     }
