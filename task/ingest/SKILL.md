@@ -21,7 +21,10 @@ description: 论文检索入库（discover 发现 / audit 复核），按 single
 
 1. **resolve**：种子解析走 `scholar_lookup`（五形态分流）；自主发现按年份窗口
    用 `search_arxiv` / `web_search`（仅线索级）——候选必须先过 ② 才能 acquire。
-   每确定一个候选先建 `.ingest/candidates/<slug>/candidate.json`。
+   每确定一个候选**立即** `init_candidate <slug> --payload '<json>'` 落盘
+   （slug 建议 = 模型名小写去符号；payload 必含 paper_title / paper_url，
+   scholar_lookup 返回的 doi/arxiv_id/authors/openaccesspdf_url 一并写入；
+   后续取证结果用同命令合并更新，如 `code_availability`）。
 2. **verify**：`github_search --probe` 采集官方性证据 → 确定性判定
    （official / author_maintained / likely）。`likely` → needs_human（见「何时问人」）。
 3. **acquire**：`download_pdf`（多源链）→ **`extract_repo_links`**（PDF 全文挖
@@ -52,6 +55,10 @@ description: 论文检索入库（discover 发现 / audit 复核），按 single
 
 ## 边界与禁止事项
 
+- **失败预算（硬护栏，防退化循环）**：同一脚本同一参数连续失败 3 次 → 该通道
+  标记降级，不再重试；整体检索通道全部降级 → 立即 needs_human 收尾
+  （`ledger_update --verdict unavailable` + report），**不得继续探索环境**
+- 不读白名单外路径（docs/ 已开放）；不尝试 write/edit；不运行未声明脚本
 - **LLM 不得判定 `none`**：只有 `extract_repo_links` 报"全文无仓库链接"或
   repo 快照 0 个 .py（probe 通过）两种确定性证据可登记 none
 - `likely` 官方性不得直接 format/apply——必须人工确认或转 pending

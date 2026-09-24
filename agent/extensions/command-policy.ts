@@ -9,7 +9,7 @@ export interface Policy {
 }
 export interface CommandPlan { executable: string; args: string[] }
 
-const READ_DIRS = ["task", "runs", "single-cell-hub"];
+const READ_DIRS = ["task", "runs", "single-cell-hub", "docs"];
 const READ_FILES = ["AGENTS.md", "README.md", "pyproject.toml", "main.py",
   ".env.example", ".python-version"];
 
@@ -27,13 +27,15 @@ export function readAllowed(root: string, raw: string): boolean {
   } catch { return false; }
 }
 
-/** A literal argv grammar, deliberately smaller than shell syntax. */
+/** A literal argv grammar, deliberately smaller than shell syntax.
+ *  Meta characters are banned only OUTSIDE quotes — quoted content is a
+ *  literal argument (e.g. --payload '<json>'), the shell never sees it. */
 export function tokenize(command: string): string[] {
-  if (/[\x00-\x1f\x7f&|;<>`$\\*?~{}()[\]#!]/u.test(command))
-    throw new Error("shell operators, expansion and control characters are disabled");
   const result: string[] = [];
   let token = "", quote = "", started = false;
   for (const char of command.trim()) {
+    if (char === "\0" || char === "\n" || char === "\r")
+      throw new Error("control characters are disabled");
     if (quote) {
       if (char === quote) quote = "";
       else token += char;
@@ -43,6 +45,8 @@ export function tokenize(command: string): string[] {
     } else if (char === " ") {
       if (started) result.push(token);
       token = ""; started = false;
+    } else if (/[\x00-\x1f\x7f&|;<>`$\\*?~{}()[\]#!]/u.test(char)) {
+      throw new Error("shell operators, expansion and control characters are disabled");
     } else { token += char; started = true; }
   }
   if (quote) throw new Error("unterminated quote");
