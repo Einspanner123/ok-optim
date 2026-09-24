@@ -251,16 +251,31 @@ RENDERERS = {"human": HumanRenderer, "quiet": QuietRenderer, "raw": RawRenderer}
 
 
 def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path,
-                renderer) -> int:
-    """非交互: pi -p --mode json，逐行转发渲染器 + 原始事件落盘。"""
+                renderer, timeout_s: float = 0.0) -> int:
+    """非交互: pi -p --mode json，逐行转发渲染器 + 原始事件落盘。
+
+    timeout_s > 0 时为会话墙钟超时（防端点退化无限流式）：超时终止子进程
+    并返回 2（needs_human，journal 记录未完成）。
+    """
     events_path = run_dir / "events.jsonl"
     with events_path.open("w", encoding="utf-8") as sink, subprocess.Popen(
         cmd, env=env, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, bufsize=1,
     ) as proc:
         assert proc.stdout is not None
+        t0 = time.monotonic()
         try:
             for line in proc.stdout:
+                if timeout_s > 0 and time.monotonic() - t0 > timeout_s:
+                    print(f"[budget] 会话墙钟超时（{timeout_s:.0f}s），终止并记 needs_human",
+                          file=sys.stderr)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    return 2
                 line = line.rstrip("\n")
                 if not line:
                     continue
@@ -335,6 +350,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "AGENT_SLUG": slug,
         "AGENT_RUN_DIR": str(run_dir),
         "AGENT_INTERACTIVE": "1" if interactive else "0",
+        "AGENT_TOOL_BUDGET": str(args.tool_budget),
         "PI_CODING_AGENT_DIR": str(agent_dir),
         # 禁直跑令牌: bootstrap-guard 校验，缺它 pi 拒绝启动
         "AGENT_INVOKED_BY_LAUNCHER": uuid.uuid4().hex,
@@ -368,6 +384,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "--thinking", "off",
         "--skill", str(REPO_ROOT / "task" / task),  # SKILL.md 即任务说明书
         "-e", str(REPO_ROOT / "agent" / "extensions" / "path-guard.ts"),
+        "-e", str(REPO_ROOT / "agent" / "extensions" / "budget-guard.ts"),
         "-e", str(REPO_ROOT / "agent" / "extensions" / "ask-user.ts"),
     ]
 
@@ -382,7 +399,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             cmd = [node_bin, pi_entry, "-p", "--mode", "json", *common_args, prompt]
             renderer.header(task, slug, model_id, run_dir)
             t0 = time.monotonic()
-            code = run_pi_json(cmd, env, run_dir, renderer)
+            code = run_pi_json(cmd, env, run_dir, renderer, args.timeout)
             elapsed = time.monotonic() - t0
     except KeyboardInterrupt:
         code = 130
@@ -448,6 +465,14 @@ def main() -> None:
     p_run.add_argument(
         "--output", choices=sorted(RENDERERS), default="human",
         help="非交互输出样式: human=人类轨迹 / quiet=一行 JSON 摘要 / raw=事件透传",
+    )
+    p_run.add_argument(
+        "--tool-budget", type=int, default=60,
+        help="工具调用预算（budget-guard 机械护栏，超限强制收尾）",
+    )
+    p_run.add_argument(
+        "--timeout", type=int, default=1800,
+        help="会话墙钟超时秒数（0 关闭；超时终止记 needs_human）",
     )
     p_run.set_defaults(func=cmd_run)
 
