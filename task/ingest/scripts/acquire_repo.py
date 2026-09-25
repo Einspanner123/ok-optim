@@ -162,8 +162,11 @@ def main() -> int:
         return 2
     repo_dir = candidate_dir(args.slug) / "repo"
     if repo_dir.exists():
-        print("needs_human: repo/ 已存在，幂等保护——先人工清理再重跑", file=sys.stderr)
-        return 2
+        if repo_dir.is_dir() and not repo_dir.is_symlink() and not any(repo_dir.iterdir()):
+            repo_dir.rmdir()  # A failed prior acquisition left only an empty placeholder.
+        else:
+            print("needs_human: repo/ already contains data; review before retrying", file=sys.stderr)
+            return 2
     repo_dir.mkdir(parents=True)
 
     try:

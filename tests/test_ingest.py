@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "task/ingest/script
 import _state as state
 import _entry as entry
 import audit_scan
+import acquire_repo
 from hubkit import render, readers
 from hubkit.schema import CSV_COLUMNS, INDEX_FILES, ENTRIES_ROOT, entry_path
 from test_hubkit import row, readme
@@ -85,6 +86,38 @@ class IngestTests(unittest.TestCase):
         self.assertEqual(entry.status_snapshot(slug)["phase"], "staged")
         (self.hub / ".gitignore").write_text("# changed\n")
         self.assertEqual(entry.status_snapshot(slug)["phase"], "staged_stale")
+
+    def test_old_unrelated_validation_errors_can_be_restaged(self):
+        slug = self.candidate()
+        self.assertTrue(entry.stage(slug)["ok"])
+        path = state.candidate_dir(slug) / "staged/summary.json"
+        summary = json.loads(path.read_text())
+        summary["validation"] = {
+            "ok": False, "error_count": 1,
+            "errors": [{"model": "Seed", "message": "bad legacy PDF"}],
+        }
+        path.write_text(json.dumps(summary))
+        self.assertEqual(entry.status_snapshot(slug)["phase"], "staged_stale")
+
+    def test_acquire_repo_reuses_empty_placeholder_only(self):
+        slug = self.candidate()
+        repo = state.candidate_dir(slug) / "repo"
+        saved = repo / "main.py"
+        self.assertNotEqual(saved.stat().st_size, 0)
+        url = "https://github.com/example/New"
+        with patch.object(acquire_repo, "load_dotenv"), \
+             patch.object(sys, "argv", ["acquire_repo.py", slug, url]), \
+             patch.object(acquire_repo, "_github") as github:
+            self.assertEqual(acquire_repo.main(), 2)
+            github.assert_not_called()
+            saved.unlink()
+            self.assertEqual(entry.status_snapshot(slug)["phase"], "materials_missing")
+            github.side_effect = lambda repo_url, dest: (
+                (dest / "main.py").write_text("new = 1\n"),
+                {"channel": "github", "commit": "a" * 40, "files": 1},
+            )[1]
+            self.assertEqual(acquire_repo.main(), 0)
+            self.assertEqual((repo / "main.py").read_text(), "new = 1\n")
 
     def test_stage_does_not_modify_hub_and_apply_uses_exact_files(self):
         slug = self.candidate()

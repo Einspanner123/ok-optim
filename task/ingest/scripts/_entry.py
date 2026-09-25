@@ -61,7 +61,7 @@ def material_paths(slug: str, name: str) -> tuple[Path, Path]:
     else:
         raise IngestError("PDF 缺失或存在多个不同 PDF，请确认候选材料")
     repo = state.contained(cdir, cdir / "repo")
-    if not repo.is_dir():
+    if not repo.is_dir() or not any(repo.iterdir()):
         raise IngestError("源码快照缺失")
     state.contained(cdir, pdf)
     return pdf, repo
@@ -167,7 +167,7 @@ def status_snapshot(slug: str | None = None) -> dict:
     materials = []
     if not paper.is_dir() or not any(paper.glob("*.pdf")):
         materials.append("PDF")
-    if not (cdir / "repo").is_dir():
+    if not (cdir / "repo").is_dir() or not any((cdir / "repo").iterdir()):
         materials.append("repository snapshot")
     if materials:
         result.update(phase="materials_missing", missing=materials,
@@ -189,9 +189,14 @@ def status_snapshot(slug: str | None = None) -> dict:
     try:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         if not summary.get("validation", {}).get("ok"):
-            result.update(phase="validation_failed",
-                          error_count=summary.get("validation", {}).get("error_count", 0),
-                          guidance="Correct the reported validation errors before staging again.")
+            errors = summary.get("validation", {}).get("errors", [])
+            if errors and all(error.get("model") != cand["model_name"] for error in errors):
+                result.update(phase="staged_stale",
+                              guidance="The saved validation errors concern other entries. Run stage_entry again under the current validation rules.")
+            else:
+                result.update(phase="validation_failed",
+                              error_count=summary.get("validation", {}).get("error_count", 0),
+                              guidance="Correct the reported validation errors before staging again.")
             return result
         pdf, repo = material_paths(slug, cand["model_name"])
         fresh = (summary.get("version") == 1
