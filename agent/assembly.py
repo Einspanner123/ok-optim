@@ -101,10 +101,15 @@ def render_models_json(env: dict[str, str]) -> Path:
                 "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
                 "contextWindow": 128000,
                 "maxTokens": 16384,
-                # 采样参数（2026-09-24 口径）：temperature 0 贪心在长会话触发
-                # 重复退化（"Let me try" ×26），升温 0.2 + top_p 0.95 抑制；
-                # repetition_penalty 由 vLLM 引擎侧 generation_config 提供
-                "samplingParams": {"temperature": 0.2, "top_p": 0.95},
+                # 采样参数（2026-09-24 二次修订）：temperature 0 贪心触发长会话
+                # 重复退化（"Let me try" ×26），抬到 0.2 实测仍不足（三次 run
+                # 均以重复循环告终），再抬到 0.4；frequency_penalty 经
+                # samplingParams 原样直传 vLLM，专惩重复 token，代价小于继续升温
+                "samplingParams": {
+                    "temperature": 0.4,
+                    "top_p": 0.95,
+                    "frequency_penalty": 0.3,
+                },
             }
         ],
     }
