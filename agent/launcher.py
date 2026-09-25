@@ -71,7 +71,8 @@ def resolve_slug(task: str, overrides: dict[str, str], dotenv: dict[str, str]) -
     return task
 
 
-def build_prompt(task: str, spec: assembly.SkillSpec, overrides: dict[str, str]) -> str:
+def build_prompt(task: str, spec: assembly.SkillSpec, overrides: dict[str, str],
+                 *, interactive: bool = False) -> str:
     """组装首条任务指令：任务名 + 注入参数 + 指向 SKILL.md。"""
     lines = [
         f"执行任务: {task}",
@@ -79,6 +80,11 @@ def build_prompt(task: str, spec: assembly.SkillSpec, overrides: dict[str, str])
         f"完整任务说明在 task/{task}/SKILL.md —— 请先完整阅读它，再按其流程执行。",
         "",
     ]
+    if interactive:
+        lines.append("本次为交互模式；需要人工裁决时使用已提供的 ask_user 工具。")
+    else:
+        lines.append("本次为非交互模式，运行中无人应答。需要人工裁决时记录 pending / needs_human，"
+                     "继续处理不依赖该裁决的工作并安全收尾；不要等待回复或探测运行模式。")
     if overrides:
         lines.append("本次注入的参数（环境变量，只读）:")
         for key, val in sorted(overrides.items()):
@@ -368,7 +374,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return EXIT_FATAL
 
     model_id = env.get("AGENT_LLM_MODEL", "")
-    prompt = build_prompt(task, spec, overrides)
+    prompt = build_prompt(task, spec, overrides, interactive=interactive)
     session_name = f"{task}/{slug}"
 
     # pi 公共参数: 显式装配（不依赖 .pi/ 项目目录）
@@ -376,7 +382,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "--approve",
         "--no-extensions",  # Only reviewed extensions explicitly listed below.
         "--no-prompt-templates",
-        "--tools", "read,bash,ask_user",
+        "--tools", "read,bash,ask_user" if interactive else "read,bash",
         "-e", str(REPO_ROOT / "agent" / "extensions" / "bootstrap-guard.ts"),
         "--provider", "ok-llm", "--model", model_id,
         "--name", session_name,
@@ -385,8 +391,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         "--skill", str(REPO_ROOT / "task" / task),  # SKILL.md 即任务说明书
         "-e", str(REPO_ROOT / "agent" / "extensions" / "path-guard.ts"),
         "-e", str(REPO_ROOT / "agent" / "extensions" / "budget-guard.ts"),
-        "-e", str(REPO_ROOT / "agent" / "extensions" / "ask-user.ts"),
     ]
+    if interactive:
+        common_args.extend(["-e", str(REPO_ROOT / "agent" / "extensions" / "ask-user.ts")])
 
     renderer = None
     elapsed = 0.0
@@ -460,7 +467,7 @@ def main() -> None:
     )
     p_run.add_argument(
         "--interactive", action="store_true",
-        help="交互模式（TUI；默认非交互，ask_user 降级为 needs_human 分支）",
+        help="交互模式（TUI；默认非交互，需要人工判断时记录 needs_human）",
     )
     p_run.add_argument(
         "--output", choices=sorted(RENDERERS), default="human",

@@ -1,19 +1,18 @@
 /**
  * ask-user: 运行中裁决升级工具。
  *
- * 仅交互模式（pi TUI）可用；json/print 模式返回 NOT_INTERACTIVE，
- * agent 按各任务 SKILL.md 约定走 needs_human 分支（写 pending + 安全收尾）。
+ * 仅由交互启动器加载；非交互环境即使误加载本扩展也不注册工具。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
+  if (process.env.AGENT_INTERACTIVE !== "1") return;
   pi.registerTool({
     name: "ask_user",
     label: "Ask user",
     description:
-      "向用户提问获取人工裁决（选项二选一/多选一，或确认）。" +
-      "仅交互模式可用；非交互模式会返回 NOT_INTERACTIVE，此时按 SKILL.md 的 needs_human 分支处理。",
+      "向用户提问获取人工裁决（选项二选一/多选一，或确认）。",
     parameters: Type.Object({
       question: Type.String({
         description: "要问的问题，说明背景与需要裁决的点",
@@ -26,17 +25,7 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (ctx.mode !== "tui") {
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                "NOT_INTERACTIVE: ask_user 在非交互模式不可用。" +
-                "请按 SKILL.md 的 needs_human 分支处理：记录 pending 项（说明决策点与候选），然后安全收尾。",
-            },
-          ],
-          details: {},
-        };
+        throw new Error("Interactive UI is not available");
       }
 
       if (params.options && params.options.length > 0) {

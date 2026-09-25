@@ -31,13 +31,13 @@ description: <一句话描述任务目标>
 
 ## 何时问人
 
-<!-- 交互模式（--interactive）：ask_user(question, options) 的裁决点清单。
-     默认非交互 / batch：ask_user 返回 NOT_INTERACTIVE，
+<!-- 交互模式（--interactive）：列出需要使用本轮交互工具的裁决点。
+     默认非交互 / batch：不提供交互工具，直接
      改走 needs_human 分支（写 pending.json + 安全收尾），不得猜测用户意图。 -->
 
 | 决策点 | 交互模式（--interactive） | 非交互（默认） |
 |---|---|---|
-| TODO | ask_user | pending |
+| TODO | 使用已提供的交互工具 | pending |
 
 ## 完成标准（Done 的定义）
 

@@ -26,7 +26,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(bash);
   pi.on("tool_call", async (event, ctx) => {
     const deny = (reason: string) => ({ block: true, reason: "path-guard: " + reason });
-    if (event.toolName === "ask_user") return undefined;
+    if (event.toolName === "ask_user" && process.env.AGENT_INTERACTIVE === "1") return undefined;
     if (event.toolName === "read") {
       try {
         if (realpathSync(ctx.cwd) !== root) return deny("working directory differs from project root");
@@ -43,6 +43,6 @@ export default function (pi: ExtensionAPI) {
         return undefined;
       } catch (error) { return deny(String(error)); }
     }
-    return deny("tool disabled; use read, bash (declared scripts/read-only commands), or ask_user");
+    return deny("tool disabled; use only the tools enabled for this run");
   });
 }
