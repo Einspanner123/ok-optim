@@ -141,9 +141,8 @@ def status_snapshot(slug: str | None = None) -> dict:
         root = state.INGEST_ROOT / "candidates"
         if not root.is_dir():
             return {"items": [], "guidance": "No candidate records exist yet."}
-        names = sorted(p.name for p in root.iterdir() if p.is_dir())[:5]
-        return {"items": [status_snapshot(name) for name in names],
-                "truncated": len([p for p in root.iterdir() if p.is_dir()]) > 5}
+        names = sorted(p.name for p in root.iterdir() if p.is_dir())
+        return {"items": [status_snapshot(name) for name in names], "truncated": False}
     cdir = state.candidate_dir(slug)
     if not (cdir / "candidate.json").is_file():
         return {"slug": slug, "phase": "candidate_missing",

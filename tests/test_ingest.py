@@ -120,6 +120,13 @@ class IngestTests(unittest.TestCase):
             self.assertEqual(acquire_repo.main(), 0)
             self.assertEqual((repo / "main.py").read_text(), "new = 1\n")
 
+    def test_status_lists_every_candidate(self):
+        for name in ("A", "B", "C", "D", "E", "F"):
+            self.candidate(name)
+        listed = entry.status_snapshot()
+        self.assertEqual(len(listed["items"]), 6)
+        self.assertFalse(listed["truncated"])
+
     def test_newer_candidate_evidence_supersedes_pending_status(self):
         slug = self.candidate()
         state.append_ledger(state.load_candidate_raw(slug), "official", "old pending")
