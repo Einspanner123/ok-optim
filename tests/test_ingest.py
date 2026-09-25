@@ -4,9 +4,10 @@ import json
 import os
 import sys
 import tempfile
+import zipfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "task/ingest/scripts"))
 import _state as state
@@ -118,6 +119,45 @@ class IngestTests(unittest.TestCase):
             )[1]
             self.assertEqual(acquire_repo.main(), 0)
             self.assertEqual((repo / "main.py").read_text(), "new = 1\n")
+
+    def test_newer_candidate_evidence_supersedes_pending_status(self):
+        slug = self.candidate()
+        state.append_ledger(state.load_candidate_raw(slug), "official", "old pending")
+        self.assertEqual(entry.status_snapshot(slug)["phase"], "pending")
+        path = state.candidate_dir(slug) / "candidate.json"
+        cand = json.loads(path.read_text())
+        cand["updated_at"] = "2099-01-01T00:00:00+00:00"
+        path.write_text(json.dumps(cand))
+        self.assertEqual(entry.status_snapshot(slug)["phase"], "ready_to_stage")
+
+    def test_github_archive_fallback_uses_commit_and_filters_files(self):
+        blob = io.BytesIO()
+        with zipfile.ZipFile(blob, "w") as archive:
+            archive.writestr("repo-abc/main.py", "answer = 42\n")
+            archive.writestr("repo-abc/weights/model.bin", "binary")
+            archive.writestr("repo-abc/../escape.txt", "bad")
+        meta = Mock()
+        meta.raise_for_status.return_value = None
+        meta.json.return_value = {"default_branch": "main"}
+        head = Mock()
+        head.raise_for_status.return_value = None
+        head.json.return_value = {"sha": "a" * 40}
+        target = self.root / "archive"
+        target.mkdir()
+        with patch.object(acquire_repo, "gh_api", side_effect=[meta, head]), \
+             patch.object(acquire_repo, "http_get_stream", return_value=blob.getvalue()):
+            result = acquire_repo._github_archive(
+                "https://github.com/example/repo", target)
+        self.assertEqual(result["commit"], "a" * 40)
+        self.assertEqual(result["files"], 1)
+        self.assertEqual((target / "main.py").read_text(), "answer = 42\n")
+        self.assertFalse((target / "weights/model.bin").exists())
+        self.assertFalse((target / "escape.txt").exists())
+        with patch.object(acquire_repo, "_run_git", side_effect=__import__("subprocess").CalledProcessError(1, "git")), \
+             patch.object(acquire_repo, "_github_archive", return_value=result) as fallback:
+            self.assertEqual(acquire_repo._github(
+                "https://github.com/example/repo", target), result)
+            fallback.assert_called_once()
 
     def test_stage_does_not_modify_hub_and_apply_uses_exact_files(self):
         slug = self.candidate()

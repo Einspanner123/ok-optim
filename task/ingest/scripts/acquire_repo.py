@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """acquire_repo: 仓库快照三通道（契约「脚本职责要点」）。
 
-    ① GitHub: shallow clone + git rev-parse HEAD（40 位）+ 剥 .git
+    ① GitHub: shallow clone, or immutable commit archive if Git transport fails; 40-char HEAD + strip .git
        + 子模块递归实化（失败置 repo_needs_review，不静默跳过）
     ② HuggingFace: 经 hf-mirror.com 拉取文件清单，排除权重
     ③ PyPI sdist 兜底: pip download --no-deps --no-binary :all:（commit=unavailable）
@@ -15,15 +15,17 @@ exit: 0 成功 / 2 needs_human（repo_needs_review 等待人工确认）/ 3 fata
 from __future__ import annotations
 
 import argparse
+import io
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 from _state import _stdio_json, candidate_dir, load_candidate_raw
-from _net import http_get, load_dotenv
+from _net import gh_api, http_get, http_get_stream, load_dotenv
 from hubkit.schema import CODE_EXTS
 
 WEIGHT_EXTS = {".pt", ".pth", ".ckpt", ".bin", ".onnx", ".safetensors",
@@ -77,11 +79,61 @@ def _run_git(args: list[str], **kw) -> subprocess.CompletedProcess:
                               capture_output=True, timeout=600, **kw)
 
 
+def _github_archive(repo_url: str, repo_dir: Path) -> dict:
+    """Use GitHub's immutable commit archive when Git transport is unavailable."""
+    match = re.fullmatch(
+        r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?",
+        repo_url,
+    )
+    if not match:
+        raise ValueError("Invalid GitHub repository URL")
+    owner, repo = match.groups()
+    meta = gh_api(f"/repos/{owner}/{repo}")
+    meta.raise_for_status()
+    branch = meta.json()["default_branch"]
+    head = gh_api(f"/repos/{owner}/{repo}/commits/{branch}")
+    head.raise_for_status()
+    commit = head.json()["sha"]
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("GitHub returned an invalid commit")
+    data = http_get_stream(
+        f"https://codeload.github.com/{owner}/{repo}/zip/{commit}",
+        max_bytes=50 * 1024 * 1024,
+    )
+    kept, dropped, total = 0, [], 0
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        files = archive.infolist()
+        if len(files) > 10000:
+            raise ValueError("GitHub archive contains too many files")
+        for info in files:
+            parts = info.filename.split("/")
+            if (info.is_dir() or len(parts) < 2 or
+                    any(part in ("", ".", "..") or "\\" in part for part in parts) or
+                    info.external_attr >> 16 & 0o170000 == 0o120000):
+                continue
+            rel = Path(*parts[1:])
+            total += info.file_size
+            if total > 200 * 1024 * 1024:
+                raise ValueError("GitHub archive expands beyond size limit")
+            if _excluded(rel, info.file_size):
+                dropped.append(rel.as_posix())
+                continue
+            target = repo_dir / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(info))
+            kept += 1
+    return {"channel": "github_archive", "commit": commit, "files": kept,
+            "dropped": dropped[:20], "submodules_needs_review": False}
+
+
 def _github(repo_url: str, repo_dir: Path) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="acquire-"))
     try:
         clone_dir = tmp / "clone"
-        _run_git(["git", "clone", "--depth", "1", "--quiet", repo_url, str(clone_dir)])
+        try:
+            _run_git(["git", "clone", "--depth", "1", "--quiet", repo_url, str(clone_dir)])
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return _github_archive(repo_url, repo_dir)
         head = _run_git(["git", "-C", str(clone_dir),
                          "rev-parse", "HEAD"]).stdout.decode().strip()
         if not re.fullmatch(r"[0-9a-f]{40}", head):

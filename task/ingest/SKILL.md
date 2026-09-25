@@ -10,7 +10,7 @@ description: Discover or audit single-cell papers, acquire official sources, sta
 ## Workspace and entry points
 
 - `.ingest/candidates/<slug>/candidate.json` stores metadata; `paper/` and `repo/` store materials; `cache/` stores extracted text; `staged/` stores validated prospective files. The workspace persists across runs.
-- First read `single-cell-hub/single_cell_models/models.csv` to avoid duplicates, then run `candidate status --json` once to inspect existing candidates. Reuse unapplied candidates when appropriate; do not download existing PDFs or repositories again.
+- First read `single-cell-hub/single_cell_models/models.csv` to avoid duplicates, then run `candidate status --json` once to inspect existing candidates. Reuse unapplied candidates when appropriate; recheck pending candidates when newer materials or evidence are available. Do not download existing PDFs or repositories again.
 - Process one candidate end to end before broadening discovery. Prefer an existing candidate with a PDF and official repository over a new lead. Do not collect more leads while a qualified candidate can be staged or applied.
 - Do not inspect script source or repeatedly read large cached pages during normal operation. Use the documented CLI and script results; inspect source only when a result conflicts with the contract.
 - Run declared scripts as `uv run python task/ingest/scripts/<name>.py ... --json`. Underscore-prefixed modules are internal implementation, not agent entry points.

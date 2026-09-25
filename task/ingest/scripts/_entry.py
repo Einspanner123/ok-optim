@@ -160,7 +160,7 @@ def status_snapshot(slug: str | None = None) -> dict:
     if rec and rec.get("applied"):
         result.update(phase="applied", guidance="This candidate is already applied. Move to another candidate or finish.")
         return result
-    if rec and not rec.get("applied"):
+    if rec and not rec.get("applied") and rec.get("checked_at", "") >= cand.get("updated_at", ""):
         result.update(phase="pending", guidance="A human decision or unresolved evidence is recorded. Continue independent work.")
         return result
     paper = cdir / "paper"
