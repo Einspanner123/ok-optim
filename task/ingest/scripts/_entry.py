@@ -124,7 +124,7 @@ def stage(slug: str) -> dict:
                    "files": {rel: digest(prepared / rel) for rel in files}, "checked_at": state.now_iso()}
         with tempfile.TemporaryDirectory(prefix="ingest-check-") as tmp:
             materialize(hub, prepared, summary, Path(tmp))
-            summary["validation"] = check(Path(tmp))
+            summary["validation"] = check(Path(tmp), only=row["model_name"])
         state.atomic_json(prepared / "summary.json", summary)
         staged = state.contained(cdir, cdir / "staged")
         if staged.exists():
@@ -241,7 +241,7 @@ def apply(slug: str) -> dict:
         temp = Path(folder)
         view = temp / "view"
         materialize(hub, staged, summary, view)
-        validation = check(view)
+        validation = check(view, only=name)
         if not validation["ok"]:
             raise IngestError("应用前校验失败: " + json.dumps(validation, ensure_ascii=False))
         affected = [*INDEX_FILES, entry_path(name)]
@@ -268,7 +268,7 @@ def apply(slug: str) -> dict:
                     shutil.copytree(source, target)
                 else:
                     shutil.copyfile(source, target)
-            validation = check(hub)
+            validation = check(hub, only=name)
             if not validation["ok"]:
                 raise IngestError("应用后校验失败: " + json.dumps(validation, ensure_ascii=False))
             state.append_ledger(cand, cand["verdict"], str(cand.get("code_availability") or cand.get("evidence") or ""), applied=True)

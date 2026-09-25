@@ -101,6 +101,16 @@ class IngestTests(unittest.TestCase):
         self.assertTrue(state.load_ledger()[-1]["applied"])
         self.assertTrue(entry.check(self.hub)["ok"])
 
+    def test_existing_unrelated_errors_do_not_block_a_valid_new_entry(self):
+        (self.hub / entry_path("Seed") / "paper/Seed.pdf").write_bytes(b"bad legacy PDF")
+        (self.hub / ENTRIES_ROOT / "Orphan").mkdir()
+        self.assertFalse(entry.check(self.hub)["ok"])
+        slug = self.candidate()
+        self.assertTrue(entry.stage(slug)["ok"])
+        self.assertTrue(entry.apply(slug)["ok"])
+        self.assertTrue(entry.check(self.hub, only="New")["ok"])
+        self.assertFalse(entry.check(self.hub)["ok"])
+
     def test_audit_update_replaces_row_and_entry(self):
         slug = self.candidate("Seed")
         self.assertTrue(entry.stage(slug)["ok"])

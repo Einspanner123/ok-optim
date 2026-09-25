@@ -801,3 +801,8 @@ agent/vendor/node-v22.23.2-linux-arm64/bin/node --experimental-strip-types --tes
 - `budget-guard.ts` 在路径守卫之前计入每次工具请求，包括被拒绝的调用。完全相同的工具名和参数连续请求两次后，第三次被拒绝；它通过任务声明的只读状态入口附上可核实的阶段和缺项。总预算耗尽后禁止继续调用工具。
 - ingest 的状态由 `candidate.py status [slug] --json` 从候选、材料、暂存摘要和台账推导；不另存阶段字段。暂存与状态查询共用必填字段规则。
 - launcher 使用独立定时器监控非交互会话墙钟，避免无日志输出时无法触发超时；预算耗尽后模型仍继续发起工具调用则终止运行。
+
+
+### 增量入库与存量异常
+
+- `stage_entry` 和 `apply_entry` 仍校验全局 CSV schema 与双 README 镜像，并完整校验本次目标条目；与目标无关的存量 PDF/源码缺陷由 `audit_scan` 报告，不阻断新条目入库。避免既有坏条目使所有后续合法入库不可执行。
