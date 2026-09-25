@@ -13,6 +13,13 @@ HUB = REPO_ROOT / "single-cell-hub"
 INGEST_ROOT = REPO_ROOT / ".ingest"
 LEDGER = INGEST_ROOT / "ledger.jsonl"
 VERDICTS = {"official", "author_maintained", "likely", "none", "unavailable"}
+REQUIRED_CANDIDATE_FIELDS = ("model_name", "paper_title", "paper_url", "year",
+                             "venue", "repo_url", "framework", "license", "verdict")
+
+
+def missing_candidate_fields(cand: dict) -> list[str]:
+    """Fields required by staging, shared with the read-only status view."""
+    return [field for field in REQUIRED_CANDIDATE_FIELDS if not cand.get(field)]
 NONE_EVIDENCE_MARKERS = ("全文无仓库链接", "no runnable code")
 
 

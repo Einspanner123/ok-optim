@@ -14,6 +14,9 @@ def main() -> int:
     set_parser.add_argument("slug")
     set_parser.add_argument("--payload", required=True)
     set_parser.add_argument("--json", action="store_true")
+    status = sub.add_parser("status")
+    status.add_argument("slug", nargs="?")
+    status.add_argument("--json", action="store_true")
     record = sub.add_parser("record")
     record.add_argument("slug")
     record.add_argument("--verdict", required=True,
@@ -24,6 +27,11 @@ def main() -> int:
     record.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:
+        if args.action == "status":
+            from _entry import status_snapshot
+            result = status_snapshot(args.slug)
+            _stdio_json(result, args.json)
+            return 0
         if args.action == "set":
             cand = update_candidate(args.slug, json.loads(args.payload))
             result = {"slug": args.slug, "fields": sorted(cand)}

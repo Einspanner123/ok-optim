@@ -1,5 +1,5 @@
 name: ingest
-description: single-cell 论文发现、复核、暂存和入库
+description: Discover, audit, stage, and apply single-cell paper entries
 required_env: [INGEST_MODE]
 optional_env:
   - INGEST_SEED_URL
@@ -10,9 +10,11 @@ optional_env:
   - INGEST_VENUE
   - INGEST_YEAR
   - INGEST_COMMIT
+  - INGEST_APPLY_AUTHORIZED
+status_script: candidate
 scripts:
   candidate:
-    args: {action: str, slug: str, "payload?": str, "verdict?": str, "evidence?": str}
+    args: {action: str, "slug?": str, "payload?": str, "verdict?": str, "evidence?": str}
   scholar_lookup:
     args: {seed: str, "limit?": int}
   search_arxiv:

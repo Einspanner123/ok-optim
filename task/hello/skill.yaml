@@ -1,5 +1,5 @@
 name: hello
-description: M0 冒烟任务——验证 env 注入、脚本执行通道与轨迹输出
+description: Smoke-test environment injection, script execution, and run evidence
 required_env: []
 optional_env:
   - FOO

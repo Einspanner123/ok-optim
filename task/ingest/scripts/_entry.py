@@ -36,8 +36,7 @@ def digest(path: Path) -> str | None:
 
 def load_candidate(slug: str) -> tuple[dict, dict]:
     cand = state.load_candidate_raw(slug)
-    required = [*CSV_COLUMNS[:6], "framework", "license", "verdict"]
-    missing = [field for field in required if not cand.get(field)]
+    missing = state.missing_candidate_fields(cand)
     if missing:
         raise IngestError(f"候选缺少字段: {missing}")
     entry_name(cand["model_name"])
@@ -133,6 +132,86 @@ def stage(slug: str) -> dict:
         prepared.rename(staged)
     result = {"slug": slug, "staged": str(staged), **summary["validation"]}
     state.progress(slug, "staged" if result["ok"] else "validation_failed", result)
+    return result
+
+
+def status_snapshot(slug: str | None = None) -> dict:
+    """Read-only, evidence-derived status for guard feedback."""
+    if slug is None:
+        root = state.INGEST_ROOT / "candidates"
+        if not root.is_dir():
+            return {"items": [], "guidance": "No candidate records exist yet."}
+        names = sorted(p.name for p in root.iterdir() if p.is_dir())[:5]
+        return {"items": [status_snapshot(name) for name in names],
+                "truncated": len([p for p in root.iterdir() if p.is_dir()]) > 5}
+    cdir = state.candidate_dir(slug)
+    if not (cdir / "candidate.json").is_file():
+        return {"slug": slug, "phase": "candidate_missing",
+                "missing": ["candidate.json"],
+                "guidance": "Create a candidate from a verified paper lead."}
+    cand = state.load_candidate_raw(slug)
+    result = {"slug": slug, "phase": "", "missing": [], "guidance": ""}
+    if cand.get("paper_title"):
+        result["paper_title"] = cand["paper_title"]
+    try:
+        rec = state.latest_by_key(state.load_ledger()).get(state.ledger_key(cand))
+    except (KeyError, TypeError):
+        rec = None
+    if rec and rec.get("applied"):
+        result.update(phase="applied", guidance="This candidate is already applied. Move to another candidate or finish.")
+        return result
+    if rec and not rec.get("applied"):
+        result.update(phase="pending", guidance="A human decision or unresolved evidence is recorded. Continue independent work.")
+        return result
+    paper = cdir / "paper"
+    materials = []
+    if not paper.is_dir() or not any(paper.glob("*.pdf")):
+        materials.append("PDF")
+    if not (cdir / "repo").is_dir():
+        materials.append("repository snapshot")
+    if materials:
+        result.update(phase="materials_missing", missing=materials,
+                      guidance="Acquire the missing materials or record why the channel is unavailable.")
+        return result
+    missing = state.missing_candidate_fields(cand)
+    if missing:
+        result.update(phase="metadata_incomplete", missing=missing,
+                      guidance="Verify and save the missing fields with candidate set; record pending if verification cannot continue.")
+        return result
+    if cand["verdict"] not in {"official", "author_maintained"}:
+        result.update(phase="human_review",
+                      guidance="Repository officiality is unresolved. Record pending or ask the human in an interactive run.")
+        return result
+    summary_path = cdir / "staged" / "summary.json"
+    if not summary_path.is_file():
+        result.update(phase="ready_to_stage", guidance="Run stage_entry and follow its validation result.")
+        return result
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        if not summary.get("validation", {}).get("ok"):
+            result.update(phase="validation_failed",
+                          error_count=summary.get("validation", {}).get("error_count", 0),
+                          guidance="Correct the reported validation errors before staging again.")
+            return result
+        pdf, repo = material_paths(slug, cand["model_name"])
+        fresh = (summary.get("version") == 1
+                 and summary.get("slug") == slug
+                 and summary.get("model_name") == cand["model_name"]
+                 and summary.get("candidate_hash") == digest(cdir / "candidate.json")
+                 and summary.get("baseline") == baseline(state.HUB, cand["model_name"])
+                 and summary.get("pdf") == str(pdf)
+                 and summary.get("repo") == str(repo)
+                 and summary.get("pdf_hash") == digest(pdf)
+                 and summary.get("repo_hash") == digest(repo)
+                 and all(digest(state.contained(cdir / "staged", cdir / "staged" / rel)) == saved
+                         for rel, saved in summary.get("files", {}).items()))
+        if fresh:
+            result.update(phase="staged", guidance="A valid staged entry exists. Apply only when this run is authorized.")
+        else:
+            result.update(phase="staged_stale", guidance="Candidate, materials, staged files, or hub baseline changed. Run stage_entry again.")
+    except (OSError, ValueError, KeyError, TypeError, IngestError) as exc:
+        result.update(phase="staged_stale", guidance="The staged summary could not be verified. Run stage_entry again.",
+                      )
     return result
 
 

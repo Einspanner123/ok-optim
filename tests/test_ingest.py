@@ -66,6 +66,26 @@ class IngestTests(unittest.TestCase):
         (cdir / "repo/main.py").write_text("candidate = 2\n")
         return slug
 
+    def test_status_is_read_only_and_tracks_stage_freshness(self):
+        slug = self.candidate()
+        path = state.candidate_dir(slug) / "candidate.json"
+        data = json.loads(path.read_text())
+        for field in ("framework", "license", "verdict"):
+            data.pop(field)
+        path.write_text(json.dumps(data))
+        before = path.read_bytes()
+        snapshot = entry.status_snapshot(slug)
+        self.assertEqual(snapshot["phase"], "metadata_incomplete")
+        self.assertEqual(snapshot["missing"], ["framework", "license", "verdict"])
+        self.assertEqual(path.read_bytes(), before)
+        state.update_candidate(slug, {"framework": "PyTorch", "license": "MIT",
+                                      "verdict": "official"})
+        self.assertEqual(entry.status_snapshot(slug)["phase"], "ready_to_stage")
+        self.assertTrue(entry.stage(slug)["ok"])
+        self.assertEqual(entry.status_snapshot(slug)["phase"], "staged")
+        (self.hub / ".gitignore").write_text("# changed\n")
+        self.assertEqual(entry.status_snapshot(slug)["phase"], "staged_stale")
+
     def test_stage_does_not_modify_hub_and_apply_uses_exact_files(self):
         slug = self.candidate()
         before = entry.digest(self.hub)

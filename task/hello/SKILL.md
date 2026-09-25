@@ -1,41 +1,37 @@
 ---
 name: hello
-description: M0 冒烟任务——验证 env 注入、脚本执行通道与轨迹输出。运行 hello 脚本并向用户汇报注入的环境变量。
+description: Smoke-test environment injection, script execution, and run evidence.
 ---
 
-# hello 任务
+# hello task
 
-M0 验收件。目的：验证启动器 → pi → path-guard → task 脚本 的完整链路。
+Verify the launcher, pi, path guard, and task-script execution path.
 
-## 流程
+## Procedure
 
-1. 运行脚本（唯一正确的调用形态）:
+1. Run the declared script:
 
    ```bash
    uv run python task/hello/scripts/hello.py --json
    ```
 
-2. 读取脚本的 JSON 输出，向用户汇报:
-   - `env.FOO` 的值（本次是否注入了 FOO）
-   - `env.AGENT_TASK` / `AGENT_SLUG`（启动器注入的运行时变量）
-   - `python` 版本与 `cwd`
+2. Read its JSON result and report the injected `env.FOO` value, `env.AGENT_TASK`, `env.AGENT_SLUG`, the Python version, and the working directory.
 
-3. 如需额外验证参数解析，可运行:
+3. To verify argument parsing when needed, run:
 
    ```bash
    uv run python task/hello/scripts/hello.py --json --echo arbitrary-text
    ```
 
-## 边界
+## Boundaries
 
-- 不要尝试 write/edit/修改任何文件（会被 path-guard 拒绝）
-- 不要运行白名单外的 bash 命令
-- 任务完成后简短汇报结论即可，不要展开额外工作
+- Do not attempt direct write/edit operations.
+- Do not run commands outside the bash allowlist.
+- Report the result briefly and stop.
 
-## 完成标准
+## Completion
 
-- hello 脚本以 exit 0 运行且输出了合法 JSON
-- 汇报中明确给出 FOO 注入值（或指出未注入）
-- `python_executable` 位于项目 `.venv/` 内（venv 由 launcher 启动时注入）
-
-- launcher 模式下，脚本原子写入本次 run_id 对应的 task_result.json；由 journal 核验，不能仅凭自然语言汇报判为 done。
+- The hello script exits 0 and returns valid JSON.
+- The report states whether FOO was injected.
+- `python_executable` is inside the project `.venv/`.
+- The script writes `task_result.json` for this run_id; the journal verifies it.

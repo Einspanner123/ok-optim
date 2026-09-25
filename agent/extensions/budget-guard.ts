@@ -1,30 +1,82 @@
 /**
- * budget-guard: 机械护栏——工具调用预算耗尽后拒绝一切工具调用。
- *
- * 模型不守软预算（SKILL.md 失败预算），退化循环必须由 harness 机械终止：
- * 超过 AGENT_TOOL_BUDGET（默认 60）次工具调用后，所有工具调用被拒绝并收到
- * "立即总结收尾"指令——模型只能产出最终文本答复，会话自然结束而非爆 token。
- * launcher 记账的 usage 与本计数无关（本计数是 pi 会话内的真实执行数）。
+ * Count every model tool request before path-guard runs. Give actionable feedback
+ * on the third consecutive identical request, and block all calls beyond budget.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { execFile } from "node:child_process";
+import { resolve } from "node:path";
+import { promisify } from "node:util";
 
+const execFileAsync = promisify(execFile);
 const BUDGET = Number(process.env.AGENT_TOOL_BUDGET ?? 60) || 60;
+const REPEAT_LIMIT = 2;
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, stable(item)]),
+    );
+  }
+  return value;
+}
+
+function candidateSlug(input: unknown): string | undefined {
+  const match = JSON.stringify(input ?? "").match(
+    /\.ingest\/candidates\/([A-Za-z0-9][A-Za-z0-9._-]*)/,
+  );
+  return match?.[1];
+}
+
+async function statusFeedback(input: unknown): Promise<string> {
+  const script = process.env.AGENT_STATUS_SCRIPT;
+  const task = process.env.AGENT_TASK;
+  const root = process.env.AGENT_PROJECT_ROOT;
+  if (!script || !task || !root || !/^[A-Za-z0-9_-]+$/.test(script)
+      || !/^[A-Za-z0-9_-]+$/.test(task)) return "";
+  const file = resolve(root, "task", task, "scripts", script + ".py");
+  const args = ["-B", "-E", "-s", file, "status"];
+  const slug = candidateSlug(input);
+  if (slug) args.push(slug);
+  args.push("--json");
+  try {
+    const { stdout } = await execFileAsync(resolve(root, ".venv/bin/python"), args, {
+      cwd: root, timeout: 5000, maxBuffer: 16384,
+      env: { PATH: "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" },
+    });
+    const state = JSON.parse(stdout);
+    return " Task status: " + JSON.stringify(state);
+  } catch {
+    return " Task status could not be verified; do not infer the current phase.";
+  }
+}
 
 export default function (pi: ExtensionAPI) {
   let count = 0;
-  let exhausted = false;
-  pi.on("tool_call", async (event, ctx) => {
-    if (exhausted) {
+  let previous = "";
+  let consecutive = 0;
+  pi.on("tool_call", async (event) => {
+    count += 1;
+    if (count > BUDGET) {
       return {
         block: true,
-        reason:
-          `工具调用预算已耗尽（上限 ${BUDGET} 次）。` +
-          "不要再尝试任何工具。立即根据已获得的信息输出最终汇报：" +
-          "已完成步骤、受阻原因（needs_human 事项）、遗留 pending 项。然后结束。",
+        reason: `Tool budget exhausted (maximum ${BUDGET} requests). Do not call more tools. `
+          + "Report completed work, verified blockers, and remaining pending items, then stop.",
       };
     }
-    count += 1;
-    if (count >= BUDGET) exhausted = true;
+    const key = JSON.stringify([event.toolName, stable(event.input)]);
+    consecutive = key === previous ? consecutive + 1 : 1;
+    previous = key;
+    if (consecutive > REPEAT_LIMIT) {
+      return {
+        block: true,
+        reason: `Repeated tool call blocked: ${event.toolName} with identical arguments `
+          + `was requested ${consecutive} times consecutively. `
+          + "Use verified results to choose a different permitted action."
+          + await statusFeedback(event.input),
+      };
+    }
     return undefined;
   });
 }

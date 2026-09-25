@@ -17,7 +17,9 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
+import threading
 import sys
 import time
 import uuid
@@ -73,20 +75,23 @@ def resolve_slug(task: str, overrides: dict[str, str], dotenv: dict[str, str]) -
 
 def build_prompt(task: str, spec: assembly.SkillSpec, overrides: dict[str, str],
                  *, interactive: bool = False) -> str:
-    """组装首条任务指令：任务名 + 注入参数 + 指向 SKILL.md。"""
+    """Build the English run instruction. Response language is in the system prompt."""
     lines = [
-        f"执行任务: {task}",
+        f"Execute task: {task}",
         "",
-        f"完整任务说明在 task/{task}/SKILL.md —— 请先完整阅读它，再按其流程执行。",
+        f"Read task/{task}/SKILL.md in full, then follow its workflow.",
         "",
     ]
     if interactive:
-        lines.append("本次为交互模式；需要人工裁决时使用已提供的 ask_user 工具。")
+        lines.append("This is an interactive run. Use the available ask_user tool when a human decision is required.")
     else:
-        lines.append("本次为非交互模式，运行中无人应答。需要人工裁决时记录 pending / needs_human，"
-                     "继续处理不依赖该裁决的工作并安全收尾；不要等待回复或探测运行模式。")
+        lines.append("This is a noninteractive run; no human can answer during execution. "
+                     "Record pending / needs_human for required decisions, continue independent work, "
+                     "and finish safely. Do not probe the run mode.")
+        lines.append("Write the final user-facing answer in Simplified Chinese, even though "
+                     "these instructions and tool feedback are in English.")
     if overrides:
-        lines.append("本次注入的参数（环境变量，只读）:")
+        lines.append("Injected task parameters (read-only environment):")
         for key, val in sorted(overrides.items()):
             if key not in spec.required_env + spec.optional_env:
                 continue
@@ -96,14 +101,11 @@ def build_prompt(task: str, spec: assembly.SkillSpec, overrides: dict[str, str],
             lines.append(f"  {key}={shown}")
         lines.append("")
     if spec.optional_env:
-        lines.append(
-            f"可选参数（本次未注入则忽略）: {', '.join(spec.optional_env)}"
-        )
-    lines.append(
-        "约束提醒: 你没有任何直接写盘工具（write/edit 会被拒绝）；"
-        "一切操作通过运行 task 脚本完成（bash 仅允许运行当前任务的脚本与只读命令）。"
-    )
-    lines.append("工作目录已经是项目根目录；不要 cd，不要使用 shell 连接符或变量展开。")
+        lines.append(f"Optional parameters (ignore if absent): {', '.join(spec.optional_env)}")
+    lines.append("You have no direct write/edit tools. Write through declared task scripts only; "
+                 "bash allows those scripts and approved read-only commands.")
+    lines.append("The working directory is already the project root. Do not use cd, shell operators, "
+                 "or variable expansion.")
     return "\n".join(lines)
 
 
@@ -258,30 +260,47 @@ RENDERERS = {"human": HumanRenderer, "quiet": QuietRenderer, "raw": RawRenderer}
 
 def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path,
                 renderer, timeout_s: float = 0.0) -> int:
-    """非交互: pi -p --mode json，逐行转发渲染器 + 原始事件落盘。
-
-    timeout_s > 0 时为会话墙钟超时（防端点退化无限流式）：超时终止子进程
-    并返回 2（needs_human，journal 记录未完成）。
-    """
+    """Stream Pi events and enforce a wall-clock deadline independent of output."""
     events_path = run_dir / "events.jsonl"
+    timed_out = threading.Event()
+    budget_limit = int(env.get("AGENT_TOOL_BUDGET", "60"))
+    tool_requests = 0
+
+    def stop_group(proc: subprocess.Popen) -> None:
+        if proc.poll() is not None:
+            return
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                return
+            def force_stop() -> None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            killer = threading.Timer(5, force_stop)
+            killer.daemon = True
+            killer.start()
+        else:
+            proc.terminate()
+
     with events_path.open("w", encoding="utf-8") as sink, subprocess.Popen(
         cmd, env=env, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, bufsize=1,
+        start_new_session=(os.name == "posix"),
     ) as proc:
         assert proc.stdout is not None
-        t0 = time.monotonic()
+        def expire() -> None:
+            if proc.poll() is None:
+                timed_out.set()
+                stop_group(proc)
+        timer = threading.Timer(timeout_s, expire) if timeout_s > 0 else None
+        if timer:
+            timer.daemon = True
+            timer.start()
         try:
             for line in proc.stdout:
-                if timeout_s > 0 and time.monotonic() - t0 > timeout_s:
-                    print(f"[budget] 会话墙钟超时（{timeout_s:.0f}s），终止并记 needs_human",
-                          file=sys.stderr)
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait()
-                    return 2
                 line = line.rstrip("\n")
                 if not line:
                     continue
@@ -292,18 +311,25 @@ def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path,
                 except json.JSONDecodeError:
                     renderer.line(line, None)
                     continue
+                if isinstance(event, dict) and event.get("type") == "tool_execution_start":
+                    tool_requests += 1
+                    if tool_requests > budget_limit + 3:
+                        print("[budget] Tool requests continued after exhaustion; terminating run",
+                              file=sys.stderr)
+                        stop_group(proc)
+                        return 2
                 renderer.line(line, event if isinstance(event, dict) else None)
             proc.wait()
+            if timed_out.is_set():
+                print(f"[timeout] Run exceeded {timeout_s:.0f} seconds", file=sys.stderr)
+                return 2
             return proc.returncode
         except BaseException:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
+            stop_group(proc)
             raise
-
+        finally:
+            if timer:
+                timer.cancel()
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -357,6 +383,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "AGENT_RUN_DIR": str(run_dir),
         "AGENT_INTERACTIVE": "1" if interactive else "0",
         "AGENT_TOOL_BUDGET": str(args.tool_budget),
+        "AGENT_STATUS_SCRIPT": spec.status_script or "",
         "PI_CODING_AGENT_DIR": str(agent_dir),
         # 禁直跑令牌: bootstrap-guard 校验，缺它 pi 拒绝启动
         "AGENT_INVOKED_BY_LAUNCHER": uuid.uuid4().hex,
@@ -382,6 +409,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "--approve",
         "--no-extensions",  # Only reviewed extensions explicitly listed below.
         "--no-prompt-templates",
+        "--append-system-prompt", str(REPO_ROOT / "agent" / "prompts" / "system.md"),
         "--tools", "read,bash,ask_user" if interactive else "read,bash",
         "-e", str(REPO_ROOT / "agent" / "extensions" / "bootstrap-guard.ts"),
         "--provider", "ok-llm", "--model", model_id,
@@ -389,8 +417,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         "--session-dir", str(run_dir),
         "--thinking", "off",
         "--skill", str(REPO_ROOT / "task" / task),  # SKILL.md 即任务说明书
-        "-e", str(REPO_ROOT / "agent" / "extensions" / "path-guard.ts"),
         "-e", str(REPO_ROOT / "agent" / "extensions" / "budget-guard.ts"),
+        "-e", str(REPO_ROOT / "agent" / "extensions" / "path-guard.ts"),
     ]
     if interactive:
         common_args.extend(["-e", str(REPO_ROOT / "agent" / "extensions" / "ask-user.ts")])

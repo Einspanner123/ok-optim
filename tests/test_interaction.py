@@ -61,8 +61,13 @@ class InteractionTests(unittest.TestCase):
                     self.assertEqual("ask_user" in cmd[-1], expected)
                     if not expected:
                         self.assertIn("pending / needs_human", cmd[-1])
+                        self.assertIn("final user-facing answer in Simplified Chinese", cmd[-1])
                         self.assertNotIn("NOT_INTERACTIVE", cmd[-1])
                     self.assertIn("--no-extensions", cmd)
+                    self.assertIn("--append-system-prompt", cmd)
+                    system_path = cmd[cmd.index("--append-system-prompt") + 1]
+                    self.assertTrue(system_path.endswith("/agent/prompts/system.md"))
+                    self.assertEqual("Execute task: hello" in cmd[-1], True)
 
 
 if __name__ == "__main__":

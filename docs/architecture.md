@@ -792,3 +792,12 @@ summary.md 聚合 20 模型状态矩阵 + token 消耗。
 .venv/bin/python -B -m unittest discover -s tests -v
 agent/vendor/node-v22.23.2-linux-arm64/bin/node --experimental-strip-types --test tests/test_policy.mjs
 ```
+
+
+### 模型提示词与重复调用反馈
+
+- `agent/prompts/system.md` 通过 launcher 的 `--append-system-prompt` 加入 pi 系统提示词，不覆盖 pi 自带工具规则。模型使用英文规划；非交互最终答复默认简体中文；交互答复根据最近一条真实用户请求的主要叙述语言调整。
+- 项目撰写的模型指令、工具描述和守卫反馈使用英文；`AGENTS.md` 维护全局规则，各任务的 `SKILL.md` 维护业务流程。外部论文和代码保持原文。
+- `budget-guard.ts` 在路径守卫之前计入每次工具请求，包括被拒绝的调用。完全相同的工具名和参数连续请求两次后，第三次被拒绝；它通过任务声明的只读状态入口附上可核实的阶段和缺项。总预算耗尽后禁止继续调用工具。
+- ingest 的状态由 `candidate.py status [slug] --json` 从候选、材料、暂存摘要和台账推导；不另存阶段字段。暂存与状态查询共用必填字段规则。
+- launcher 使用独立定时器监控非交互会话墙钟，避免无日志输出时无法触发超时；预算耗尽后模型仍继续发起工具调用则终止运行。

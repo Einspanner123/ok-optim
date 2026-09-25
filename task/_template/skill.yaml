@@ -1,14 +1,14 @@
 name: <name>
-description: <一句话描述任务目标>
+description: <one-sentence task objective>
 
-# assembly preflight 校验：缺失 required_env 即拒绝启动并打印注入清单
+# Preflight rejects missing required environment variables.
 required_env: []
 optional_env: []
 
-# path-guard 依据本清单拦截 bash 调用：仅允许 uv run python task/<name>/scripts/<已声明>.py
+# The path guard allows only these task script entry points.
 scripts:
   example_script:
     args:
-      slug: str         # 位置参数
-      limit: int?       # ? 表示 optional
-      # want: str?      # 枚举值在 SKILL.md 约定，argparse choices 兜底
+      slug: str       # positional argument
+      limit: int?     # optional argument
+      # want: str?    # document choices in SKILL.md and enforce them in argparse

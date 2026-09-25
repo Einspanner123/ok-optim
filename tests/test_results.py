@@ -2,6 +2,9 @@ import argparse
 import contextlib
 import io
 import json
+import os
+import sys
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -145,6 +148,23 @@ class ResultTests(unittest.TestCase):
         self.assertIn("public", prompt)
         self.assertNotIn("provider-secret", prompt)
         self.assertNotIn("task-secret", prompt)
+
+    def test_silent_pi_process_hits_wall_clock_deadline(self):
+        renderer = launcher.QuietRenderer(io.StringIO(), io.StringIO())
+        with patch.object(launcher, "REPO_ROOT", self.root), contextlib.redirect_stderr(io.StringIO()):
+            start = time.monotonic()
+            code = launcher.run_pi_json(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                dict(os.environ), self.run, renderer, 0.2)
+        self.assertEqual(code, 2)
+        self.assertLess(time.monotonic() - start, 3)
+
+    def test_system_prompt_language_rules_are_loaded_from_file(self):
+        prompt = (Path(launcher.__file__).parent / "prompts/system.md").read_text()
+        self.assertIn("Use English for planning", prompt)
+        self.assertIn("noninteractive run", prompt)
+        self.assertIn("Simplified Chinese", prompt)
+        self.assertIn("latest substantive human request", prompt)
 
     def test_make_run_dir_rejects_traversal_and_reuse(self):
         with patch.object(assembly, "REPO_ROOT", self.root):
