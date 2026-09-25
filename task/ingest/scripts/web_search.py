@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from _ingest import _stdio_json
+from _state import _stdio_json
 from _net import load_dotenv
 
 

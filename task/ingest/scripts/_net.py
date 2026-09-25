@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 
 import httpx
 
-from _ingest import INGEST_ROOT, REPO_ROOT
+from _state import INGEST_ROOT, REPO_ROOT
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
@@ -166,9 +167,34 @@ def gh_raw(path: str, ref: str | None = None) -> str:
     return resp.text
 
 
-def out(payload: dict, as_json: bool) -> None:
-    print(json.dumps(payload, ensure_ascii=False, indent=2) if as_json
-          else json.dumps(payload, ensure_ascii=False)[:4000])
+AVAIL_RE = re.compile(
+    r"(?:code\s+(?:and\s+data\s+)?availability|data\s+and\s+code\s+availability)"
+    r"[^\n]{0,80}?[:：]?\s*(.{100,1500}?)(?=\n\s*\n|</p>|$)", re.I | re.S)
+META_RE = re.compile(
+    r'<meta\s+name="([^"]+)"\s+content="([^"]*)"', re.I)
+STRIP = re.compile(r"<[^>]+>")
+
+
+def strip_html(html: str) -> str:
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.I | re.S)
+    return STRIP.sub(" ", text)
+
+
+def extract_availability(html: str) -> str:
+    m = AVAIL_RE.search(html) or AVAIL_RE.search(strip_html(html))
+    if not m:
+        return ""
+    return " ".join(m.group(1).split())[:1200]
+
+
+def extract_metadata(html: str) -> dict:
+    out: dict[str, str] = {}
+    for name, content in META_RE.findall(html):
+        name = name.lower()
+        if name.startswith("citation_"):
+            out[name[len("citation_"):]] = content.strip()
+    return out
+
 
 
 def load_dotenv() -> None:

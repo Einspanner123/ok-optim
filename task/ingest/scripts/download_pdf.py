@@ -13,9 +13,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from _ingest import _stdio_json, candidate_dir, load_candidate_raw
+from _state import _stdio_json, candidate_dir, load_candidate_raw
 from _net import http_get, http_get_stream, load_dotenv
-from fetch_page import extract_metadata
+from _net import extract_metadata
 from hubkit.schema import PDF_MAGIC, PDF_MIN_BYTES
 
 

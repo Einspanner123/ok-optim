@@ -22,7 +22,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _ingest import _stdio_json, candidate_dir, load_candidate_raw
+from _state import _stdio_json, candidate_dir, load_candidate_raw
 from _net import http_get, load_dotenv
 from hubkit.schema import CODE_EXTS
 

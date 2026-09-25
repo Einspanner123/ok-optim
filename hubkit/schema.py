@@ -68,3 +68,16 @@ INNER_README = "single_cell_models/README.md"
 MODELS_CSV = "single_cell_models/models.csv"
 ENTRIES_ROOT = "single_cell_models"
 GITIGNORE = ".gitignore"
+
+INDEX_FILES = (OUTER_README, INNER_README, MODELS_CSV, GITIGNORE)
+
+
+def entry_name(name: str) -> str:
+    """Names are a single directory component, never a caller-supplied path."""
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name):
+        raise ValueError(f"非法 model_name: {name!r}")
+    return name
+
+
+def entry_path(name: str) -> str:
+    return f"{ENTRIES_ROOT}/{entry_name(name)}"

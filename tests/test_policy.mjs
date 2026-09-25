@@ -55,6 +55,18 @@ test("rejects script symlinks", () => fixture(p => {
   p.scripts.push("link");
   assert.throws(() => planCommand("uv run python task/hello/scripts/link.py", p));
 }));
+
+test("ingest workspace is readable but internal modules remain unexecutable", () => fixture(p => {
+  mkdirSync(join(p.root, ".ingest/candidates/sample"), { recursive: true });
+  writeFileSync(join(p.root, ".ingest/candidates/sample/candidate.json"), "{}");
+  assert.equal(readAllowed(p.root, ".ingest/candidates/sample/candidate.json"), true);
+  symlinkSync(join(p.root, ".env"), join(p.root, ".ingest/secret"));
+  assert.equal(readAllowed(p.root, ".ingest/secret"), false);
+  writeFileSync(join(p.root, "task/hello/scripts/_state.py"), "");
+  assert.throws(() => planCommand("uv run python task/hello/scripts/_state.py", p));
+  assert.throws(() => planCommand('python -c "import _state"', p));
+  assert.throws(() => planCommand('uv run python -c "import _state"', p));
+}));
 test("missing task fails closed", () => fixture(p => {
   assert.throws(() => planCommand("cat README.md", { ...p, task: "" }));
 }));

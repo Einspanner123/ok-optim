@@ -20,7 +20,7 @@ import re
 import sys
 import time
 
-from _ingest import _stdio_json
+from _state import _stdio_json
 from _net import http_get, load_dotenv
 
 S2 = "https://api.semanticscholar.org/graph/v1"

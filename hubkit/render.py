@@ -1,6 +1,6 @@
 """hub 契约渲染纯函数（事实源: docs/architecture.md Part II「hub 契约」节）。
 
-消费者：task/ingest format_entry（staged 产物渲染）与 apply_entry（落位拼接）。
+消费者：ingest stage_entry；apply 使用已生成的文件内容，不再渲染。
 全部为无副作用纯函数；venue 未登记等契约问题抛 ContractError 交由调用方转
 needs_human，不静默降级。
 """
@@ -12,7 +12,8 @@ import io
 import re
 
 from hubkit.readers import BULLET_RE, TABLE_ROW_RE
-from hubkit.schema import COUNT_BADGE, REPO_KIND_AUTHOR, VENUE_STYLES
+from hubkit.schema import (COUNT_BADGE, REPO_KIND_AUTHOR, VENUE_STYLES, CSV_COLUMNS,
+                          OUTER_README, INNER_README, MODELS_CSV, GITIGNORE, entry_path)
 
 FRAMEWORK_SHORT = {"PyTorch/Hugging Face": "PyTorch / HF"}
 
@@ -72,10 +73,7 @@ def render_csv_row(row: dict) -> str:
     """单行 CSV（QUOTE_MINIMAL，\\n 结尾）。"""
     buf = io.StringIO()
     writer = csv.writer(buf, quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
-    writer.writerow([row[c] for c in (
-        "model_name", "paper_title", "year", "venue", "paper_url",
-        "repo_url", "github_stars", "framework", "license", "commit_hash",
-    )])
+    writer.writerow([row[c] for c in CSV_COLUMNS])
     return buf.getvalue()
 
 
@@ -145,3 +143,47 @@ def splice_readme(text: str, bullet: str, table_row: str) -> str:
     out = "".join(lines)
     return re.sub(r"badge/Models-(\d+)-brightgreen",
                   lambda m: f"badge/Models-{int(m[1]) + 1}-brightgreen", out)
+
+
+def upsert_readme(text: str, name: str, bullet: str, table_row: str) -> str:
+    """Replace an existing model in place (audit), otherwise append (discover)."""
+    lines = text.splitlines(keepends=True)
+    bullets = [i for i, line in enumerate(lines) if (m := BULLET_RE.match(line)) and m[1] == name]
+    tables = [i for i, line in enumerate(lines) if (m := TABLE_ROW_RE.match(line)) and m[1] == name]
+    if not bullets and not tables:
+        return splice_readme(text, bullet, table_row)
+    if len(bullets) != 1 or len(tables) != 1:
+        raise ContractError(f"README 条目不唯一或镜像不完整: {name}")
+    for start, count, value in sorted([(bullets[0], 2, bullet), (tables[0], 1, table_row)], reverse=True):
+        lines[start:start + count] = value.splitlines(keepends=True)
+    return "".join(lines)
+
+
+def entry_files(row: dict, verdict: str, status: str, rows: list[dict],
+                indexes: dict[str, str], exception: str) -> dict[str, str]:
+    """Pure rendering: hub fields in, complete prospective file contents out."""
+    name = row["model_name"]
+    model_path = entry_path(name)
+    if any("__fields__" in old for old in rows):
+        raise ContractError("现有 CSV 有损坏行")
+    if sum(old["model_name"] == name for old in rows) > 1:
+        raise ContractError(f"重复 model_name: {name}")
+    updated = [row if old["model_name"] == name else old for old in rows]
+    if not any(old["model_name"] == name for old in rows):
+        updated.append(row)
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=CSV_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(updated)
+    gitignore = indexes[GITIGNORE]
+    if exception.strip():
+        gitignore = gitignore.rstrip() + "\n\n" + exception.rstrip() + "\n"
+    return {
+        f"{model_path}/README.md": render_model_readme(name, row, verdict, status),
+        MODELS_CSV: buf.getvalue(),
+        OUTER_README: upsert_readme(indexes[OUTER_README], name,
+                                  render_bullet(row, "single_cell_models/"), render_table_row(row)),
+        INNER_README: upsert_readme(indexes[INNER_README], name,
+                                  render_bullet(row, ""), render_table_row(row)),
+        GITIGNORE: gitignore,
+    }

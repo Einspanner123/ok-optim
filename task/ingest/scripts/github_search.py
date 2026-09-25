@@ -21,7 +21,7 @@ import json
 import re
 import sys
 
-from _ingest import _stdio_json, load_candidate_raw
+from _state import _stdio_json, load_candidate_raw
 from _net import gh_api, gh_raw, load_dotenv
 
 

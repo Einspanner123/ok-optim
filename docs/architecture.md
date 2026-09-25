@@ -119,10 +119,12 @@ uv run ok pending             # 待人工项（M4）
 
 - `models.json` 声明自定义 provider（`api: "openai-completions"`，`baseUrl`/`apiKey` 从 env 读取）
 - `.env`：`OPENAI_BASE_URL` / `OPENAI_API_KEY` / `AGENT_LLM_MODEL`
-- 采样参数（2026-09-24 修订）：temperature 0.2 / top_p 0.95。原冻结口径
-  temperature 0（贪心，为一致性）在长会话实测触发重复退化（vLLM 部署，
-  三次 run 均以重复文本循环失控告终）；微升温抑制循环，repetition_penalty 1.1
-  由引擎侧 generation_config 提供
+- 采样参数（2026-09-24 二次修订）：temperature 0.4 / top_p 0.95 /
+  frequency_penalty 0.3。演进：temperature 0（贪心，为一致性）在长会话实测触发
+  重复退化（vLLM 部署）→ 抬到 0.2 实测仍不足（三次 discover run 均以重复文本
+  循环失控告终）→ 抬到 0.4，并加 frequency_penalty（经 `samplingParams` 原样
+  直传，专惩重复 token，对执行链参数精度的代价小于继续升温）；引擎侧
+  repetition_penalty 1.1 由 generation_config 提供
 
 ### Skills 装配
 
@@ -152,8 +154,8 @@ pi 默认给模型四个工具（read/write/edit/bash）+ 我们的扩展。全�
 |---|---|
 | `bash` | **命令白名单**：仅允许 `uv run python task/<当前task>/scripts/<已声明脚本>.py <args>` 形态 + `ls`/`cat`/`git log`/`git status`/`git diff` 等只读命令；其余拒绝 |
 | `write` / `edit` | **默认拒绝**——"LLM 不直接写盘"硬约束：一切产物写入只能经 task 脚本（脚本内部有自己的路径白名单） |
-| `read` | 路径白名单内可读：`task/`、`runs/`、`AGENTS.md`、`single-cell-hub/`（只读语义） |
-| `ask_user(question, options)` | `ask-user.ts` 注册；仅交互模式可用 |
+| `read` | 路径白名单内可读：`task/`、`runs/`、`.ingest/`、`AGENTS.md`、`single-cell-hub/`（只读语义） |
+| `ask_user(question, options)` | 仅交互模式加载 `ask-user.ts` 并注册；非交互不暴露 |
 | slash `/skill:<name>` | pi 原生技能入口，SKILL.md 即任务说明书 |
 
 ## 权限边界：三层约束（不等同于 OS 沙盒）
@@ -203,7 +205,7 @@ ingest 侧），纯读方（optimize）按它读取、读错即报，不需要�
   - `--set K=V` 进 env 快照；launcher 组装首条任务指令（任务名 + 参数说明 + 指向 SKILL.md）注入 pi
 - **运行中升级（ask_user）**：agent 无法从 env 得知的裁决点——官方性存疑确认、
   多候选仓库二选一、PDF/repo 人工兜底、apply 前确认
-- **无人值守降级**：默认非交互或 batch 模式下 ask_user 返回 `NOT_INTERACTIVE`，
+- **无人值守降级**：默认非交互或 batch 模式不加载提问扩展、不暴露提问工具；启动指令直接说明无人应答，
   agent 按各任务 SKILL.md 约定改走 needs_human 分支（写 `pending.json` + 安全收尾），
   事后 `uv run ok pending` 列出待人工项，处理后重跑
 - 默认值：`run` → 非交互，显式 `--interactive` 且 stdout 为 TTY 才进 TUI；`batch` → 恒为非交互
@@ -508,10 +510,10 @@ Unpaywall → `pdf_needs_manual`；落地校验 %PDF magic + ≥50KB。
 目标：**discover**——给定种子（论文 URL / arXiv ID / DOI / 标题）或在边界内自主
 发现单细胞论文，检索定位论文与官方仓库，产出符合 hub 契约的完整入库产物；
 **audit**——复核检索记录表与 hub 的一致性（空列、论文↔仓库对应、失效条目）。
-两条流程在 ④⑤⑥ 汇合，校验全绿后给出**人工 commit/PR 步骤清单**。agent 不执行
+两条流程在 stage/apply 汇合，校验全绿后给出**人工 git 步骤清单**。agent 不执行
 git 提交。
 
-### skill.yaml（13 脚本）
+### skill.yaml（12 个 agent 入口）
 
 ```yaml
 name: ingest
@@ -531,10 +533,9 @@ scripts:
   download_pdf:       {args: {slug: str, paper_url: str}}
   extract_repo_links: {args: {slug: str}}              # PDF 全文挖仓库链接（两模式共用核心）
   acquire_repo:       {args: {slug: str, repo_url: str, commit: str?}}
-  format_entry:       {args: {slug: str}}
-  validate_entry:     {args: {slug: str}}
+  stage_entry:       {args: {slug: str}}
   apply_entry:        {args: {slug: str, confirm: bool}}
-  ledger_update:      {args: {slug: str, verdict: str, evidence: str?}}
+  candidate:         {args: {action: str, slug: str}}   # set / record，具体参数见脚本 --help
   audit_scan:         {args: {key: str?}}              # 无 key 全量扫描；有 key 指定复核
 ```
 
@@ -546,21 +547,19 @@ discover 入口                          audit 入口
             发现（数量 INGEST_MAX_NEW、             异常清单 = 哈希不匹配 /
             年份窗口护栏），定位论文                 unavailable / 空列条目
             与仓库链接                           ① 对异常条目按 discover ②③ 重查；
-② verify    github_search --probe       　           INGEST_SEED_URL 指定时单点复核；
-            采集官方性证据 → 确定性判定              正常条目仅确定性校验，不跑 LLM
-③ acquire   download_pdf（多源链）+     ②③  同 discover
-            extract_repo_links（PDF 挖库）+
-            acquire_repo（三通道）
-④⑤⑥ 共享：
-④ format    format_entry：按 hub 契约渲染六行 bullet + CSV 行 + 双 README + gitignore 例外
-⑤ validate  validate_entry（临时拼接 + 七条规则）全绿；不过则带报告回修（≤2 轮），仍败 → needs_human
-⑥ apply     apply_entry（validate 全绿 + confirm=true 前置）落位；ledger_update 登记结论；
+② evidence  download_pdf + extract_repo_links        INGEST_SEED_URL 指定时单点复核；
+            必要时 fetch_page 补充证据               正常条目仅确定性校验，不跑 LLM
+③ verify    github_search --probe → 判定；          ②③ 同 discover
+            确定后 acquire_repo（三通道）
+④⑤ 共享：
+④ stage     stage_entry：按 hubkit 契约生成完整待写文件并校验；失败回修最多 2 轮
+⑤ apply     apply_entry（校验全绿 + confirm 前置）落位并自行登记成功结论；
             产出验收单 report.md：产物清单 + 证据链 + 人工 git 步骤
 ```
 
 ### 检索记录表（ledger）
 
-`.ingest/ledger.jsonl`（gitignore，append-only，唯一写入方 `ledger_update`）。
+`.ingest/ledger.jsonl`（gitignore，append-only，内部 `_state.append_ledger` 写入，正式应用记录仅由 `apply_entry` 产生）。
 hub 契约管"结果正确"，本表管"过程不重复、不遗漏"——hub 侧零契约变更：
 
 - **主键**：`doi:<doi>`；无 DOI 用 `title:<norm>`（标题小写去标点的 sha256 前 12 位）
@@ -581,25 +580,26 @@ hub 契约管"结果正确"，本表管"过程不重复、不遗漏"——hub �
 .ingest/candidates/<slug>/       # gitignore
 ├── candidate.json               # 种子 + 解析结果 + 证据链 + 官方性判定（含 needs_review 原因）
 ├── paper/  repo/  cache/        # PDF、剥 .git 快照、页面缓存、全文缓存
-├── staged/                      # README / CSV 行 / 双 README 片段 / 例外块（apply 前待落位产物）
-└── validation.json  report.md
+├── staged/                      # 完整待写文件 + summary.json（含校验结果）
+└── report.md
 .ingest/ledger.jsonl             # 检索记录表（gitignore，见上节）
 ```
 
 ### 脚本职责要点
 
-| 脚本 | 关键行为 |
-|---|---|
-| `scholar_lookup.py` | S2 Graph API；种子分流；元数据/openAccessPdf/作者信息 |
-| `search_arxiv.py` / `web_search.py` / `fetch_page.py` / `download_pdf.py` | 按抽象层模板实现（通道/限流/多源链） |
-| `extract_repo_links.py` | pypdf 全文提取；仓库域 URL 清单（github/gitlab/huggingface/zenodo/gitee）+ Code Availability 段落原文；全文落缓存；检索不出 → 确定性 none |
-| `github_search.py` | search / readme 互认 / tree 探针；`--probe` 内嵌官方性判定 |
-| `acquire_repo.py` | 三通道：① GitHub shallow clone + `git rev-parse HEAD`（40 位）+ 剥 .git + 子模块递归实化（失败置 `repo_needs_review` 不静默跳过）② HF 经 hf-mirror.com 排除权重 ③ sdist 兜底 `pip download --no-deps --no-binary :all:`（hash 记 `unavailable`）；env 注入代理 |
-| `format_entry.py` | candidate.json → staged 全套产物（六行 bullet 按 verdict 措辞、CSV 行三键查重、双 README 渲染、gitignore 例外建议），复用 hubkit 渲染纯函数 |
-| `validate_entry.py` | staged 产物临时拼接到 hub 副本跑七条规则（复用 hubkit/validators），不落位、`--json` 报告 |
-| `apply_entry.py` | 前置：validate 全绿 + `confirm=true`；staged 落位到 `single-cell-hub/single_cell_models/<Name>/` + 更新 models.csv + 双 README + gitignore 例外；打印人工 git 步骤 |
-| `ledger_update.py` | 检索记录表唯一写入方：登记 verdict / paper_hash / evidence；none 仅接受确定性证据 |
-| `audit_scan.py` | 检索记录表 × hub 交叉扫描：空列 / 哈希不匹配 / unavailable / applied=false；输出异常清单（只读） |
+- `candidate.py set <slug> --payload '<json>'`：创建/合并候选资料。
+- `candidate.py record <slug> --verdict ... --evidence ...`：登记未入库结论，不能宣称 applied。
+- scholar_lookup/search_arxiv/web_search/github_search/fetch_page/download_pdf/extract_repo_links/acquire_repo：保留现有检索、取证、判定和采集能力。
+- `stage_entry.py <slug>`：一次渲染完整待写文件，构建临时 hub 视图并调用统一校验器。
+- `apply_entry.py <slug> --confirm`：确认候选、材料、hub 基线及 staged 均未改变；校验并应用同一份内容，失败恢复索引和条目；成功后登记台账。
+- `audit_scan.py`：复用 hubkit 读取/校验，仅保留台账对账。
+- `validate_hub.py`：维护用校验入口，不列入 agent 的 ingest 脚本白名单。
+- 内部模块 `_state.py`（候选/台账/结果）、`_net.py`（网络/解析）、`_entry.py`（暂存/落位/回滚）不提供 CLI、不进入白名单。
+- hubkit 只接收条目字段、现有索引和材料路径，不依赖 candidate/slug/ledger；不写正式 hub。
+- `.ingest/` 是跨运行持久工作区，agent 可读，修改仍须经过脚本。`runs/` 保存每轮结果。
+- 候选更新、暂存、登记和应用按真实结果更新 report；运行中同步输出现有 task_result 契约，只有实际应用达到目标才标记 done。
+
+暂存布局：`staged/README.md`、`staged/.gitignore`、`staged/single_cell_models/{README.md,models.csv,<Name>/README.md}` 和 `summary.json`。PDF/repo 引用候选材料，不额外保存长期副本。旧版 staged 必须重新生成。
 
 ### 人工决策点实例化
 
@@ -609,10 +609,10 @@ hub 契约管"结果正确"，本表管"过程不重复、不遗漏"——hub �
 | 多候选仓库 | ask_user 列选项 | pending：列出候选 + 各自证据 |
 | PDF 拿不到 | ask_user 给本地路径 | pending：`pdf_needs_manual` |
 | 壳仓库/子模块 | ask_user 确认子模块清单 | pending：`repo_needs_review` |
-| apply 落位前 | ask_user 确认 | **不落位**：staged 产物 + 验收单留待人工 |
+| apply 落位前 | 已明确授权则执行，否则 ask_user | 无明确授权则保持 staged + 验收单 |
 | audit 异常条目复核 | ask_user 逐条确认处置 | 重查后仍异常 → pending |
 
-**完成标准**：validate_entry 全绿（或 needs_human 状态明确且产物完整）；
+**完成标准**：stage_entry 全绿（或 needs_human 状态明确且产物完整）；
 report.md 完整（证据链表、产物清单、人工 git 步骤）；ledger 一致——每个触碰过的
 论文四态之一（finalized+applied / none / unavailable / pending）；hub 侧无半成品
 状态（staged 完整 / 已 apply / 明确 pending 三选一）。
@@ -744,7 +744,7 @@ summary.md 聚合 20 模型状态矩阵 + token 消耗。
 
 ### 工具执行边界
 
-- launcher 关闭 extension 自动发现，仅显式加载 bootstrap-guard、path-guard、ask-user；工具限定 read/bash/ask_user。
+- launcher 关闭 extension 自动发现，仅显式加载 bootstrap-guard、path-guard、budget-guard；仅交互模式额外加载 ask-user。非交互工具为 read/bash，交互额外提供 ask_user。
 - bash 保留命令输入形式，但由 literal tokenizer 解析为 argv，最终 subprocess 使用 shell=false。
   `uv run python task/<task>/scripts/<script>.py` 仅允许当前 skill.yaml 已声明的脚本；
   实际执行项目现有 .venv/bin/python（-B -E -s），不调用 uv 同步或安装环境。

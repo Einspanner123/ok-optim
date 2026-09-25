@@ -16,7 +16,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-from _ingest import _stdio_json
+from _state import _stdio_json
 from _net import http_get, load_dotenv
 
 ATOM = "https://export.arxiv.org/api/query"

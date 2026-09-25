@@ -14,7 +14,7 @@ import re
 import sys
 from pathlib import Path
 
-from _ingest import IngestError, _stdio_json, candidate_dir, load_candidate_raw
+from _state import IngestError, _stdio_json, candidate_dir, load_candidate_raw
 
 REPO_HOSTS = (r"github\.com", r"gitlab\.com", r"huggingface\.co",
               r"zenodo\.org", r"gitee\.com")

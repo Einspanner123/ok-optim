@@ -17,39 +17,10 @@ import json
 import re
 import sys
 
-from _ingest import INGEST_ROOT, _stdio_json
-from _net import http_get, load_dotenv
+from _state import INGEST_ROOT, _stdio_json
+from _net import http_get, load_dotenv, extract_metadata, extract_availability, strip_html
 
 PAGES = INGEST_ROOT / "cache" / "pages"
-AVAIL_RE = re.compile(
-    r"(?:code\s+(?:and\s+data\s+)?availability|data\s+and\s+code\s+availability)"
-    r"[^\n]{0,80}?[:：]?\s*(.{100,1500}?)(?=\n\s*\n|</p>|$)", re.I | re.S)
-META_RE = re.compile(
-    r'<meta\s+name="([^"]+)"\s+content="([^"]*)"', re.I)
-STRIP = re.compile(r"<[^>]+>")
-
-
-def strip_html(html: str) -> str:
-    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.I | re.S)
-    return STRIP.sub(" ", text)
-
-
-def extract_availability(html: str) -> str:
-    m = AVAIL_RE.search(html) or AVAIL_RE.search(strip_html(html))
-    if not m:
-        return ""
-    return " ".join(m.group(1).split())[:1200]
-
-
-def extract_metadata(html: str) -> dict:
-    out: dict[str, str] = {}
-    for name, content in META_RE.findall(html):
-        name = name.lower()
-        if name.startswith("citation_"):
-            out[name[len("citation_"):]] = content.strip()
-    return out
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="fetch_page: 网页取证")
     parser.add_argument("url")
