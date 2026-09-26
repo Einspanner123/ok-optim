@@ -10,6 +10,7 @@ exit: 0 下载成功 / 2 needs_human（全链失败，status=pdf_needs_manual）
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 from pathlib import Path
 
@@ -17,6 +18,14 @@ from _state import _stdio_json, candidate_dir, load_candidate_raw
 from _net import http_get, http_get_stream, load_dotenv
 from _net import extract_metadata
 from hubkit.schema import PDF_MAGIC, PDF_MIN_BYTES
+
+
+class DownloadDeadlineExceeded(BaseException):
+    """Stop the whole PDF chain, including a stream that keeps making progress."""
+
+
+def _deadline_expired(signum: int, frame: object) -> None:
+    raise DownloadDeadlineExceeded
 
 
 def _ok_pdf(data: bytes) -> bool:
@@ -98,7 +107,15 @@ def main() -> int:
     cdir = candidate_dir(args.slug)
     (cdir / "paper").mkdir(parents=True, exist_ok=True)
 
-    got = try_chain(cand)
+    previous_handler = signal.signal(signal.SIGALRM, _deadline_expired)
+    signal.setitimer(signal.ITIMER_REAL, 90.0)
+    try:
+        got = try_chain(cand)
+    except DownloadDeadlineExceeded:
+        got = None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
     if not got:
         payload = {"slug": args.slug, "status": "pdf_needs_manual",
                    "tried": [s for s, _ in chain_urls(cand)]}
