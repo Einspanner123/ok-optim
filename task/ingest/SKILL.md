@@ -20,7 +20,7 @@ description: Discover or audit single-cell papers, acquire official sources, sta
 ## Discover
 
 1. Use `scholar_lookup <seed>` to resolve a DOI, arXiv ID, URL, title, or search phrase. `search_arxiv <query>` and `web_search <query>` provide additional leads. Select relevant papers in the requested year range that are absent from the hub.
-2. Use `candidate set <slug> --payload '<json>'` to create or update a candidate. Include at least `paper_title` and `paper_url`; preserve available DOI, arXiv ID, authors, and open-access PDF URL. Use a stable lowercase model slug.
+2. Use `candidate set <slug> --payload '<json>'` to create or update a candidate. Include at least `paper_title` and `paper_url`; preserve available DOI, arXiv ID, authors, and open-access PDF URL. For a journal DOI, verify `year` against the publisher publication date before staging; do not use a received, submitted, or preprint date as the journal publication year. Use a stable lowercase model slug.
 3. Use `download_pdf <slug> <paper_url>` for a missing PDF and `extract_repo_links <slug>` for repository links and code-availability evidence. Use `fetch_page <url> --want metadata|code_availability|full` when needed. Read cached full text directly; do not repeat the same network request.
 4. Use `github_search <query>` to find a repository and `github_search <repo_url> --probe --slug <slug>` to assess officiality. Gather evidence before probing; repeat the probe only when evidence or repository changes. Immediately save the returned verdict, stars, and evidence with `candidate set` before making another search call. An uncertain result or multiple candidates requires a human decision.
 5. Use `acquire_repo <slug> <repo_url>` for a missing source snapshot. Immediately save its returned commit as `commit_hash` before making another search call. Read the repository LICENSE or README to verify license and framework; save verified fields immediately. Never invent a license.
@@ -40,6 +40,6 @@ description: Discover or audit single-cell papers, acquire official sources, sta
 
 ## Audit
 
-`audit_scan [key]` reports hub validation and ledger differences. Do not re-evaluate normal entries with the LLM. Investigate anomalous entries, then reuse candidate -> stage -> apply to update an existing `model_name`. Record pending when uncertainty remains. `validate_hub.py` is for human maintenance, not an additional agent tool.
+`audit_scan [key]` reports hub validation and ledger differences. Do not re-evaluate normal entries with the LLM. Investigate anomalous entries, then reuse candidate -> stage -> apply to update an existing `model_name`. When `INGEST_MODEL_NAME` is supplied, also verify that entry's `year` against the publisher publication date, even if structural checks pass; correct a mismatch through candidate -> stage -> apply. Record pending when uncertainty remains. `validate_hub.py` is for human maintenance, not an additional agent tool.
 
 Do not directly edit single-cell-hub, install dependencies, execute downloaded model code, or run git commit/push/PR.
