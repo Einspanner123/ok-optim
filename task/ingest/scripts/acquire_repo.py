@@ -18,6 +18,7 @@ import argparse
 import io
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,14 @@ from pathlib import Path
 from _state import _stdio_json, candidate_dir, load_candidate_raw
 from _net import gh_api, http_get, http_get_stream, load_dotenv
 from hubkit.schema import CODE_EXTS
+
+class AcquisitionDeadlineExceeded(BaseException):
+    """Stop a repository acquisition after its total wall-clock budget."""
+
+
+def _deadline_expired(signum: int, frame: object) -> None:
+    raise AcquisitionDeadlineExceeded
+
 
 WEIGHT_EXTS = {".pt", ".pth", ".ckpt", ".bin", ".onnx", ".safetensors",
                ".h5ad", ".h5", ".npz", ".npy", ".loom"}
@@ -71,12 +80,12 @@ def _run_git(args: list[str], **kw) -> subprocess.CompletedProcess:
         stripped = {k: v for k, v in env.items()
                     if k.lower() not in ("all_proxy", "http_proxy", "https_proxy")}
         return subprocess.run(args, env=stripped, check=True,
-                              capture_output=True, timeout=600, **kw)
+                              capture_output=True, timeout=60, **kw)
     except subprocess.CalledProcessError:
         if not any(k.lower() in ("all_proxy", "https_proxy") for k in env):
             raise
         return subprocess.run(args, env=env, check=True,
-                              capture_output=True, timeout=600, **kw)
+                              capture_output=True, timeout=60, **kw)
 
 
 def _github_archive(repo_url: str, repo_dir: Path) -> dict:
@@ -185,7 +194,7 @@ def _sdist(package: str, repo_dir: Path) -> dict:
         subprocess.run(
             ["pip", "download", "--no-deps", "--no-binary", ":all:",
              "--no-build-isolation", "-d", str(tmp), package],
-            check=True, capture_output=True, timeout=600)
+            check=True, capture_output=True, timeout=60)
         archive = next(tmp.glob("*.tar.gz")) if list(tmp.glob("*.tar.gz")) \
             else next(tmp.iterdir())
         extract = tmp / "x"
@@ -221,6 +230,8 @@ def main() -> int:
             return 2
     repo_dir.mkdir(parents=True)
 
+    previous_handler = signal.signal(signal.SIGALRM, _deadline_expired)
+    signal.setitimer(signal.ITIMER_REAL, 180.0)
     try:
         if args.repo_url.startswith("pypi:"):
             result = _sdist(args.repo_url[len("pypi:"):], repo_dir)
@@ -231,6 +242,11 @@ def main() -> int:
         else:
             print(f"fatal: 无法识别的仓库 URL: {args.repo_url!r}", file=sys.stderr)
             return 3
+    except AcquisitionDeadlineExceeded:
+        shutil.rmtree(repo_dir, ignore_errors=True)
+        print("needs_human: repo_needs_review (acquisition exceeded 180 seconds)",
+              file=sys.stderr)
+        return 2
     except subprocess.CalledProcessError as exc:
         shutil.rmtree(repo_dir, ignore_errors=True)
         print(f"needs_human: repo_needs_review（clone/子模块失败）: "
@@ -240,6 +256,10 @@ def main() -> int:
         shutil.rmtree(repo_dir, ignore_errors=True)
         print(f"fatal: 获取失败: {exc}", file=sys.stderr)
         return 3
+
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
     if result.get("submodules_needs_review"):
         result["status"] = "repo_needs_review"
