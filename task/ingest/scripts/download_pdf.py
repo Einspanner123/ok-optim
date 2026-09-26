@@ -60,7 +60,7 @@ def try_chain(cand: dict) -> tuple[bytes, str] | None:
                 if not real:
                     continue
                 url, source = real, "unpaywall→" + real.split("/")[2]
-            data = http_get_stream(url)
+            data = http_get_stream(url, timeout=30.0)
             if _ok_pdf(data):
                 return data, source
         except Exception:
@@ -73,7 +73,7 @@ def try_chain(cand: dict) -> tuple[bytes, str] | None:
             meta = extract_metadata(resp.text)
             cpdf = meta.get("pdf_url")
             if cpdf:
-                data = http_get_stream(cpdf)
+                data = http_get_stream(cpdf, timeout=30.0)
                 if _ok_pdf(data):
                     return data, "citation_pdf_url"
         except Exception:
