@@ -26,22 +26,34 @@ BASE_VARS = [
     "npm_config_registry",
 ]
 
-# 外层配置键白名单：.env 中的其余键一律不透传
+# 外层配置键白名单（.env 中的其余键一律不透传），按用途归类：
 CONFIG_KEYS = [
-    # LLM endpoint
+    # ── LLM endpoint ──
     "OPENAI_BASE_URL",
     "OPENAI_API_KEY",
     "AGENT_LLM_MODEL",
-    # optimize 任务用（NPU 验证子进程）
-    "NPU_PYTHON",
-    # 网络
+    # ── 模型解码参数（assembly 渲染进 models.json）──
+    # 核心参数：始终发送；未设置回落代码默认值
+    "DECODE_TEMPERATURE",        # 0.0–2.0，默认 0.4
+    "DECODE_TOP_P",              # 0.0–1.0，默认 0.95
+    "DECODE_FREQUENCY_PENALTY",  # -2.0–2.0，默认 0.3（vLLM 专属字段直传）
+    "DECODE_MAX_TOKENS",         # 64–200000，默认 16384（pi maxTokens）
+    # 扩展参数：仅显式设置时才发送（未设置 = 端点默认）
+    "DECODE_SEED",               # ≥0 整数；设置后同输入同输出（确定性复现）
+    "DECODE_TOP_K",              # ≥-1 整数；-1 = 关闭截断
+    "DECODE_MIN_P",              # 0.0–1.0；比 top_p 更稳的截断方式
+    "DECODE_PRESENCE_PENALTY",   # -2.0–2.0；按是否出现过惩罚（治重复）
+    "DECODE_REPETITION_PENALTY", # 0.1–2.0；乘性惩罚（治重复另一路径）
+    # ── 网络 ──
     "ALL_PROXY",
     "HTTP_PROXY",
     "HTTPS_PROXY",
     "NO_PROXY",
-    # ingest 检索/取证
-    "GITHUB_TOKEN",     # gh api 认证（core 5000/h；匿名 60/h 不够 probe 用）
-    "EMAIL",            # Unpaywall API 必填参数（不发邮件、无需注册）
+    # ── ingest 检索/取证 ──
+    "GITHUB_TOKEN",              # gh api 认证（core 5000/h；匿名 60/h 不够 probe 用）
+    "EMAIL",                     # Unpaywall API 必填参数（不发邮件、无需注册）
+    # ── optimize 任务（NPU 验证子进程）──
+    "NPU_PYTHON",
 ]
 
 # launcher 注入的运行时变量

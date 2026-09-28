@@ -394,6 +394,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         # preflight（required_env）在快照构造后执行
         assembly.preflight(task, env)
+        decode = assembly.decode_audit(env)
         assembly.render_models_json(env)
         assembly.render_guard()
     except PreflightError as exc:
@@ -441,7 +442,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     except OSError as exc:
         print(f"[launcher] runtime failed: {exc}", file=sys.stderr)
         code = EXIT_FATAL
-    summary = journal.finalize(run_dir, task, slug, code, interactive, run_id=run_id)
+    summary = journal.finalize(run_dir, task, slug, code, interactive,
+                               run_id=run_id, decode=decode)
     if interactive:
         journal.print_summary(summary, run_dir)
     elif renderer is not None:

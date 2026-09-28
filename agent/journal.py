@@ -143,7 +143,8 @@ def _task_result(run_dir: Path, summary: RunSummary) -> None:
 
 
 def finalize(run_dir: Path, task: str, slug: str, pi_exit_code: int,
-             interactive: bool, run_id: str | None = None) -> RunSummary:
+             interactive: bool, run_id: str | None = None,
+             decode: dict | None = None) -> RunSummary:
     summary = RunSummary(task, slug, pi_exit_code, interactive, run_id=run_id)
     summary.runtime_status = "finished" if pi_exit_code == 0 else "pi_error"
     audit_error = None
@@ -199,6 +200,8 @@ def finalize(run_dir: Path, task: str, slug: str, pi_exit_code: int,
     )
     payload = asdict(summary)
     payload["usage"]["cost_total"] = round(summary.usage.cost_total, 6)
+    if decode is not None:
+        payload["decode"] = decode  # 本次 run 实际生效的解码参数（审计链）
     temporary = run_dir / "journal.json.tmp"
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(run_dir / "journal.json")
