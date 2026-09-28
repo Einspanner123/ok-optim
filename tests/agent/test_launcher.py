@@ -143,7 +143,9 @@ class TestHumanRenderer:
                           assistantMessageEvent={"type": "text_delta", "delta": "hi"}))
         r.line("", _event("message_update",
                           assistantMessageEvent={"type": "text_delta", "delta": "!"}))
-        assert out.getvalue() == "hi!"
+        # text 段现在总是先开 ┈ answer ┈ 分隔线（含首轮）
+        assert out.getvalue().endswith("hi!")
+        assert "┈ answer" in out.getvalue()
 
     def test_thinking_opens_segment_with_gutter(self):
         r, out, _ = self._r()
@@ -175,6 +177,15 @@ class TestHumanRenderer:
         r, out, _ = self._r()
         r.line("", _event("message_update", assistantMessageEvent={"type": "text_delta"}))
         assert out.getvalue() == ""
+
+    def test_text_after_tool_opens_answer_segment(self):
+        r, out, _ = self._r()
+        r.line("", _event("tool_execution_end", isError=False,
+                          result={"content": [{"type": "text", "text": "ok"}]}))
+        r.line("", _event("message_update",
+                          assistantMessageEvent={"type": "text_delta", "delta": "继续"}))
+        text = out.getvalue()
+        assert "┈ answer" in text and "继续" in text
 
     def test_tool_start_bash_shows_command(self):
         r, out, _ = self._r()

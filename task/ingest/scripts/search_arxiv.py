@@ -28,6 +28,11 @@ def search(query: str, limit: int, year_from: str | None,
     resp = http_get(ATOM, params={
         "search_query": query, "start": 0, "max_results": min(limit * 2, 100),
         "sortBy": "submittedDate", "sortOrder": "descending",
+    }, headers={
+        # arXiv API 对 httpx 默认的 accept-encoding: zstd 返回 406（已知问题），
+        # 显式声明 Accept 并收窄编码集
+        "Accept": "application/atom+xml",
+        "Accept-Encoding": "gzip, deflate",
     })
     resp.raise_for_status()
     root = ET.fromstring(resp.text)

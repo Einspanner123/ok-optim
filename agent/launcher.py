@@ -190,7 +190,8 @@ class HumanRenderer:
                              "▏ " + delta.replace("\n", "\n▏ ")),
                       end="", flush=True, file=self.out)
             elif kind == "text_delta":
-                if self._stream == "thinking":
+                if self._stream != "text":
+                    # thinking→answer、tool/初始→answer 都要开段
                     self._separator("answer")
                 self._stream = "text"
                 print(delta, end="", flush=True, file=self.out)
@@ -442,7 +443,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "--provider", "ok-llm", "--model", model_id,
         "--name", session_name,
         "--session-dir", str(run_dir),
-        "--thinking", "off",
+        "--thinking", args.thinking,
         "--skill", str(REPO_ROOT / "task" / task),  # SKILL.md 即任务说明书
         "-e", str(REPO_ROOT / "agent" / "extensions" / "budget-guard.ts"),
         "-e", str(REPO_ROOT / "agent" / "extensions" / "path-guard.ts"),
@@ -539,6 +540,11 @@ def main() -> None:
     p_run.add_argument(
         "--no-thinking", action="store_true",
         help="隐藏思考流输出（human 输出模式；思考仍完整记录在 session）",
+    )
+    p_run.add_argument(
+        "--thinking", default="off",
+        choices=["off", "minimal", "low", "medium", "high"],
+        help="推理档位（透传 pi；off=无思考流；需要端点/模型支持）",
     )
     p_run.add_argument(
         "--timeout", type=int, default=1800,
