@@ -20,3 +20,6 @@ agent/vendor/*
 !agent/vendor/package-lock.json
 runs/
 .ingest/
+
+# test artifacts
+.coverage
