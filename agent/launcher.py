@@ -177,9 +177,10 @@ class HumanRenderer:
             if not delta:
                 return
             if ame.get("type") == "thinking_delta":
-                print(_color(self.out, DIM, delta), end="", flush=True)
+                print(_color(self.out, DIM, delta), end="", flush=True,
+                      file=self.out)
             elif ame.get("type") == "text_delta":
-                print(delta, end="", flush=True)
+                print(delta, end="", flush=True, file=self.out)
         elif etype == "tool_execution_start":
             tool = event.get("toolName", "?")
             args = event.get("args") or {}
@@ -262,6 +263,7 @@ def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path,
                 renderer, timeout_s: float = 0.0) -> int:
     """Stream Pi events and enforce a wall-clock deadline independent of output."""
     events_path = run_dir / "events.jsonl"
+    events_path.parent.mkdir(parents=True, exist_ok=True)
     timed_out = threading.Event()
     budget_limit = int(env.get("AGENT_TOOL_BUDGET", "60"))
     tool_requests = 0
