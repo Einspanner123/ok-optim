@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
-import { loadExtensions } from "../agent/vendor/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
+import { loadExtensions } from "../../agent/vendor/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
 
 test("all attempts count and third identical call gets status feedback", async () => {
   const old = Object.fromEntries(["AGENT_TOOL_BUDGET", "AGENT_STATUS_SCRIPT",

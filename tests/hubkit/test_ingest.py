@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "task/ingest/scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "task/ingest/scripts"))
 import _state as state
 import _entry as entry
 import audit_scan

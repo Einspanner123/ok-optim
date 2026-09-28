@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
-import { loadExtensions } from "../agent/vendor/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
+import { loadExtensions } from "../../agent/vendor/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
 
 test("ask_user registers only for interactive runs", async () => {
   const previous = process.env.AGENT_INTERACTIVE;

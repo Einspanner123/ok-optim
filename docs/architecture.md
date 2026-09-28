@@ -790,7 +790,7 @@ summary.md 聚合 20 模型状态矩阵 + token 消耗。
 
 ```bash
 .venv/bin/python -B -m unittest discover -s tests -v
-agent/vendor/node-v22.23.2-linux-arm64/bin/node --experimental-strip-types --test tests/test_policy.mjs
+agent/vendor/node-v22.23.2-linux-arm64/bin/node --experimental-strip-types --test tests/agent/test_policy.mjs
 ```
 
 

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { planCommand, readAllowed, scriptEnvironment } from "../agent/extensions/command-policy.ts";
-import { executePlan } from "../agent/extensions/safe-exec.ts";
+import { planCommand, readAllowed, scriptEnvironment } from "../../agent/extensions/command-policy.ts";
+import { executePlan } from "../../agent/extensions/safe-exec.ts";
 
 function fixture(fn) {
   const root = mkdtempSync(join(tmpdir(), "ok-policy-"));
