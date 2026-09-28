@@ -161,8 +161,9 @@ class ResultTests(unittest.TestCase):
 
     def test_system_prompt_language_rules_are_loaded_from_file(self):
         prompt = (Path(launcher.__file__).parent / "prompts/system.md").read_text()
-        self.assertIn("Use English for planning", prompt)
-        self.assertIn("noninteractive run", prompt)
+        self.assertIn("Reasoning language:", prompt)
+        self.assertIn("in English", prompt)
+        self.assertIn("Noninteractive runs (default)", prompt)
         self.assertIn("Simplified Chinese", prompt)
         self.assertIn("latest substantive human request", prompt)
 
