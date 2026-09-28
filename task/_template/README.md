@@ -6,7 +6,8 @@
 ```text
 task/<name>/
 ├── skill.yaml         # 机器可读元数据：name / description / required_env / optional_env / scripts 清单
-├── SKILL.md           # Agent Skills 标准：流程、工具用法、边界、何时问人、完成标准
+├── SKILL.md           # Agent Skills 标准：流程、工具用法、边界、何时问人、完成标准（唯一生效版）
+├── SKILL_CN.md        # SKILL.md 的中文直译版（供模型与人工中文阅读；逐段对应，改英文版后须同步）
 ├── references/        # 任务专属知识（语料笔记、领域事实），按需创建；Agent Skills 标准可选目录名
 └── scripts/           # 确定性 py 脚本薄壳，可独立执行与单测
 ```
@@ -27,6 +28,6 @@ task/<name>/
 
 1. `cp -r task/_template task/<name>`
 2. 填 `skill.yaml`：`required_env` 经 assembly preflight 校验，缺失即拒绝启动
-3. 填 `SKILL.md` 六节（见模板内 TODO 标记）
+3. 填 `SKILL.md` 六节（见模板内 TODO 标记），并同步 `SKILL_CN.md` 中文对照版
 4. 每个脚本按 `scripts/_script.py` 骨架实现，并在 `skill.yaml` 的 `scripts:` 登记
    （path-guard 依据该清单拦截未声明脚本的 bash 调用）
