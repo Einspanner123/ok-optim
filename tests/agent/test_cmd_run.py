@@ -20,6 +20,7 @@ def _make_args(task: str = "hello", set_list: list[str] | None = None,
             "AGENT_LLM_MODEL=m1",
         ],
         interactive=False, output=output, tool_budget=60, timeout=timeout,
+        no_thinking=False,
     )
 
 

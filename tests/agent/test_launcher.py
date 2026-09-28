@@ -130,7 +130,7 @@ class TestHumanRenderer:
     def test_header(self):
         r, out, _ = self._r()
         r.header("ingest", "UCE", "m1", Path("/runs/x"))
-        assert "▶ ingest/UCE" in out.getvalue() and "ok-llm/m1" in out.getvalue()
+        assert "▶ ingest/UCE" in out.getvalue() and "m1" in out.getvalue()
 
     def test_non_json_line_passthrough(self):
         r, out, _ = self._r()
@@ -145,12 +145,31 @@ class TestHumanRenderer:
                           assistantMessageEvent={"type": "text_delta", "delta": "!"}))
         assert out.getvalue() == "hi!"
 
-    def test_thinking_delta_present(self):
+    def test_thinking_opens_segment_with_gutter(self):
         r, out, _ = self._r()
         r.line("", _event("message_update",
                           assistantMessageEvent={"type": "thinking_delta",
                                                  "delta": "think"}))
-        assert "think" in out.getvalue()
+        text = out.getvalue()
+        assert "thinking" in text and "think" in text
+
+    def test_thinking_to_text_emits_answer_separator(self):
+        r, out, _ = self._r()
+        r.line("", _event("message_update",
+                          assistantMessageEvent={"type": "thinking_delta",
+                                                 "delta": "t"}))
+        r.line("", _event("message_update",
+                          assistantMessageEvent={"type": "text_delta", "delta": "A"}))
+        text = out.getvalue()
+        assert "thinking" in text and "answer" in text and "A" in text
+
+    def test_thinking_hidden_with_show_thinking_false(self):
+        out, err = io.StringIO(), io.StringIO()
+        r = launcher.HumanRenderer(out, err, show_thinking=False)
+        r.line("", _event("message_update",
+                          assistantMessageEvent={"type": "thinking_delta",
+                                                 "delta": "secret reasoning"}))
+        assert out.getvalue() == ""
 
     def test_empty_delta_ignored(self):
         r, out, _ = self._r()
@@ -161,7 +180,7 @@ class TestHumanRenderer:
         r, out, _ = self._r()
         r.line("", _event("tool_execution_start", toolName="bash",
                           args={"command": "ls -la"}))
-        assert "$ ls -la" in out.getvalue()
+        assert "┌─ bash" in out.getvalue() and "$ ls -la" in out.getvalue()
 
     def test_tool_start_read_shows_relative_path(self):
         r, out, _ = self._r()
@@ -175,36 +194,58 @@ class TestHumanRenderer:
                           args={"command": "c" * 300}))
         assert "..." in out.getvalue()
 
-    def test_tool_end_json_pretty_printed(self):
+    def test_tool_end_success_single_line_summary(self, monkeypatch):
+        monkeypatch.setattr(launcher.time, "monotonic", lambda: 0.0)
         r, out, _ = self._r()
+        r.line("", _event("tool_execution_start", toolName="bash",
+                          args={"command": "ls"}))
+        monkeypatch.setattr(launcher.time, "monotonic", lambda: 0.4)
         r.line("", _event("tool_execution_end", isError=False,
                           result={"content": [{"type": "text",
                                                "text": '{"a": 1}'}]}))
-        assert '"a": 1' in out.getvalue() and "[tool:ok]" in out.getvalue()
+        text = out.getvalue()
+        assert "└─ ✓" in text
+        assert "0.4s" in text
+        assert '{"a": 1}' not in text  # 成功不展开内容
 
-    def test_tool_end_error_tag(self):
+    def test_tool_end_error_expands_text(self):
         r, out, _ = self._r()
+        r.line("", _event("tool_execution_start", toolName="bash",
+                          args={"command": "ls"}))
         r.line("", _event("tool_execution_end", isError=True,
-                          result={"content": [{"type": "text", "text": "bad"}]}))
-        assert "[tool:ERR]" in out.getvalue()
+                          result={"content": [{"type": "text",
+                                               "text": "path-guard rejected"}]}))
+        text = out.getvalue()
+        assert "└─ ✗" in text and "path-guard rejected" in text
+
+    def test_tool_end_error_truncated_over_300(self):
+        r, out, _ = self._r()
+        r.line("", _event("tool_execution_start", toolName="bash",
+                          args={"command": "ls"}))
+        r.line("", _event("tool_execution_end", isError=True,
+                          result={"content": [{"type": "text", "text": "e" * 400}]}))
+        assert "..." in out.getvalue()
 
     def test_llm_error_line(self):
         r, out, _ = self._r()
         r.line("", _event("message_end",
                           message={"role": "assistant", "stopReason": "error",
                                    "errorMessage": "conn reset"}))
-        assert "LLM 请求失败: conn reset" in out.getvalue()
+        assert "✗ LLM: conn reset" in out.getvalue()
 
     def test_retry_line(self):
         r, out, _ = self._r()
         r.line("", _event("auto_retry_start"))
-        assert "自动重试" in out.getvalue()
+        assert "⟳ retry" in out.getvalue()
 
     def test_footer_success_banner(self):
         r, out, _ = self._r()
         r.footer(_summary(), Path("/runs/x"), 1.5)
         text = out.getvalue()
-        assert "✅ done" in text and "tools 3" in text and "in 10 / out 5" in text
+        assert "✅ done" in text and "tools 3" in text
+        assert "tokens 10→5" in text and "1.5s" in text
+        assert "/runs/x" in text
+        assert "task exit" not in text  # 冗余字段已去除
 
     def test_footer_error_banner_with_last_error(self):
         r, out, _ = self._r()

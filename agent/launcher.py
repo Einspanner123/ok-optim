@@ -136,35 +136,38 @@ def _render_tool_args(tool: str, args: dict) -> str:
     return (args_str[:197] + "...") if len(args_str) > 200 else args_str
 
 
-def _render_tool_result(event: dict) -> str:
-    """结果行：JSON 输出缩进美化（截断 600），纯文本单行截断。"""
+def _tool_result_text(event: dict) -> str:
+    """提取工具结果纯文本（不做 JSON 美化；全文永远在 events.jsonl）。"""
     result = event.get("result")
-    text = ""
-    if isinstance(result, dict):
-        content = result.get("content")
-        if isinstance(content, list):
-            text = " ".join(
-                block.get("text", "") for block in content if isinstance(block, dict)
-            )
-        elif content is not None:
-            text = str(content)
-    try:
-        pretty = json.dumps(json.loads(text), ensure_ascii=False, indent=2)
-        return pretty[:600] + "..." if len(pretty) > 600 else pretty
-    except (json.JSONDecodeError, ValueError):
-        single = text.replace("\n", " ")
-        return single[:297] + "..." if len(single) > 300 else single
+    if not isinstance(result, dict):
+        return ""
+    content = result.get("content")
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") for block in content if isinstance(block, dict)
+        )
+    return str(content) if content is not None else ""
 
 
 class HumanRenderer:
-    """默认：流式轨迹（思考 dim 色）+ 收尾横幅。"""
+    """默认：流式轨迹（思考/答案分段，工具块化）+ 收尾横幅。
 
-    def __init__(self, out, err) -> None:
+    工具成功 → 单行摘要（字节数 + 耗时）；失败 → 展开错误文本（≤300 字符）。
+    show_thinking=False 时思考段整体隐藏（--no-thinking）。
+    """
+
+    def __init__(self, out, err, show_thinking: bool = True) -> None:
         self.out, self.err = out, err
+        self.show_thinking = show_thinking
+        self._stream: str | None = None  # thinking | text | tool | None
+        self._t0: float | None = None
 
     def header(self, task: str, slug: str, model: str, run_dir: Path) -> None:
-        print(f"▶ {task}/{slug} · model=ok-llm/{model} · {run_dir}", file=self.out)
+        print(f"▶ {task}/{slug} · {model}", file=self.out)
         print(file=self.out)
+
+    def _separator(self, label: str) -> None:
+        print("\n" + _color(self.out, DIM, f"┈ {label} " + "┈" * 32), file=self.out)
 
     def line(self, raw: str, event: dict | None) -> None:
         if event is None:  # pi 的非 json 输出（警告等）直接透传
@@ -176,38 +179,59 @@ class HumanRenderer:
             delta = ame.get("delta")
             if not delta:
                 return
-            if ame.get("type") == "thinking_delta":
-                print(_color(self.out, DIM, delta), end="", flush=True,
-                      file=self.out)
-            elif ame.get("type") == "text_delta":
+            kind = ame.get("type")
+            if kind == "thinking_delta":
+                if not self.show_thinking:
+                    return
+                if self._stream != "thinking":
+                    self._separator("thinking")
+                    self._stream = "thinking"
+                print(_color(self.out, DIM,
+                             "▏ " + delta.replace("\n", "\n▏ ")),
+                      end="", flush=True, file=self.out)
+            elif kind == "text_delta":
+                if self._stream == "thinking":
+                    self._separator("answer")
+                self._stream = "text"
                 print(delta, end="", flush=True, file=self.out)
         elif etype == "tool_execution_start":
+            if self._stream in ("thinking", "text"):
+                print(file=self.out)  # 收口流式段
             tool = event.get("toolName", "?")
             args = event.get("args") or {}
-            print(f"\n{_color(self.out, CYAN, '[tool]')} "
-                  f"{_render_tool_args(tool, args)}", file=self.out)
+            print("\n" + _color(self.out, CYAN, f"┌─ {tool} " + "─" * 32),
+                  file=self.out)
+            print(_render_tool_args(tool, args), file=self.out)
+            self._t0 = time.monotonic()
+            self._stream = "tool"
         elif etype == "tool_execution_end":
-            text = _render_tool_result(event)
-            tag = _color(self.out, RED, "[tool:ERR]") if event.get("isError") \
-                else _color(self.out, CYAN, "[tool:ok]")
-            print(f"{tag} {text}", file=self.out)
+            text = _tool_result_text(event)
+            dt = time.monotonic() - self._t0 if self._t0 is not None else 0.0
+            if event.get("isError"):
+                single = text.replace("\n", " ")
+                body = single[:297] + "..." if len(single) > 300 else single
+                print(_color(self.out, RED, "└─ ✗ ") + body, file=self.out)
+            else:
+                size = len(text.encode("utf-8"))
+                print(f"└─ ✓ {size}B · {dt:.1f}s", file=self.out)
+            self._stream = None
         elif etype == "message_end":
             message = event.get("message") or {}
             if message.get("role") == "assistant" and message.get("stopReason") == "error":
-                print(f"\n{_color(self.out, RED, '[error]')} "
-                      f"LLM 请求失败: {message.get('errorMessage', '?')}", file=self.out)
+                print(f"\n{_color(self.out, RED, '✗ LLM: ')}"
+                      f"{message.get('errorMessage', '?')}", file=self.out)
         elif etype == "auto_retry_start":
-            print(_color(self.out, DIM, "[retry] 瞬时错误，自动重试..."), file=self.out)
+            print(_color(self.out, DIM, "⟳ retry"), file=self.out)
 
     def footer(self, summary, run_dir: Path, elapsed: float) -> None:
         u = summary.usage
         print(f"\n{'═' * 62}", file=self.out)
         print(f"{'✅' if summary.exit_code == 0 else '❌'} {summary.status} · "
-              f"task exit {summary.exit_code} · tools {summary.tool_calls} · "
-              f"tokens in {u.input} / out {u.output} · {elapsed:.1f}s", file=self.out)
+              f"tools {summary.tool_calls} · tokens {u.input}→{u.output} · "
+              f"{elapsed:.1f}s", file=self.out)
         if summary.last_error:
             print(f"  last error: {summary.last_error[:200]}", file=self.out)
-        print(f"  run dir: {run_dir}", file=self.out)
+        print(f"  run: {run_dir}", file=self.out)
         if summary.session_file:
             print(f"  session: {run_dir / summary.session_file}", file=self.out)
 
@@ -433,7 +457,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             cmd = [node_bin, pi_entry, *common_args, prompt]
             code = subprocess.call(cmd, env=env, cwd=str(REPO_ROOT))
         else:
-            renderer = RENDERERS[args.output](sys.stdout, sys.stderr)
+            renderer = RENDERERS[args.output](sys.stdout, sys.stderr,
+                                              show_thinking=not args.no_thinking) \
+                if args.output == "human" else RENDERERS[args.output](sys.stdout,
+                                                                      sys.stderr)
             cmd = [node_bin, pi_entry, "-p", "--mode", "json", *common_args, prompt]
             renderer.header(task, slug, model_id, run_dir)
             t0 = time.monotonic()
@@ -508,6 +535,10 @@ def main() -> None:
     p_run.add_argument(
         "--tool-budget", type=int, default=60,
         help="工具调用预算（budget-guard 机械护栏，超限强制收尾）",
+    )
+    p_run.add_argument(
+        "--no-thinking", action="store_true",
+        help="隐藏思考流输出（human 输出模式；思考仍完整记录在 session）",
     )
     p_run.add_argument(
         "--timeout", type=int, default=1800,
