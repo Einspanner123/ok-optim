@@ -16,7 +16,7 @@ import audit_scan
 import acquire_repo
 from hubkit import render, readers
 from hubkit.schema import CSV_COLUMNS, INDEX_FILES, ENTRIES_ROOT, entry_path
-from test_hubkit import row, readme
+from _fixtures import row, readme
 
 
 class IngestTests(unittest.TestCase):
