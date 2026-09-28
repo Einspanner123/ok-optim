@@ -29,7 +29,10 @@ def parse_repo(repo_url: str) -> str:
     m = re.search(r"github\.com/([\w.-]+/[\w.-]+)", repo_url)
     if not m:
         raise SystemExit(f"fatal: 非 GitHub 仓库 URL: {repo_url!r}")
-    return m.group(1).rstrip("/")
+    full = m.group(1).rstrip("/")
+    if ".." in full:
+        raise SystemExit(f"fatal: 非法仓库路径: {repo_url!r}")
+    return full
 
 
 def search_repos(query: str, limit: int) -> list[dict]:

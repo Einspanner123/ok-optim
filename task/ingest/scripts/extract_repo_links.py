@@ -22,7 +22,8 @@ URL_RE = re.compile(
     r"https?://(?:www\.)?(" + "|".join(REPO_HOSTS) + r")/[^\s\)\],;\"'>\]]+",
     re.I)
 CODE_AVAIL_RE = re.compile(
-    r"(code\s+availability[:\s].{0,1200}?)(?=\n\s*\n|[A-Z][A-Za-z ]{3,40}:|$)",
+    r"(code\s+availability[:\s].{0,1200}?)"
+    r"(?=\n\s*\n|\n[A-Z][^\n:]{0,48}:\s*\n|$)",  # 节头=短整行以冒号结尾
     re.I | re.S)
 # 末尾斜杠与句点收尾、DOI/引用编号噪声清理
 TAIL_NOISE = re.compile(r"[.)]+$")
