@@ -55,6 +55,22 @@ class TestLoadEnvFile:
         f.write_text("  FOO =  bar  \n", encoding="utf-8")
         assert envguard.load_env_file(f) == {"FOO": "bar"}
 
+    def test_inline_comment_stripped_after_whitespace(self, tmp_path: Path):
+        f = tmp_path / "a.env"
+        f.write_text("DECODE_TEMPERATURE=0.4   # 0.0-2.0; note\n", encoding="utf-8")
+        assert envguard.load_env_file(f) == {"DECODE_TEMPERATURE": "0.4"}
+
+    def test_hash_glued_to_value_is_kept(self, tmp_path: Path):
+        f = tmp_path / "a.env"
+        f.write_text("COLOR=#fff\nURL=http://x/#frag\n", encoding="utf-8")
+        assert envguard.load_env_file(f) == {"COLOR": "#fff",
+                                             "URL": "http://x/#frag"}
+
+    def test_quoted_value_keeps_hash(self, tmp_path: Path):
+        f = tmp_path / "a.env"
+        f.write_text('SECRET="a#b" # trailing note\n', encoding="utf-8")
+        assert envguard.load_env_file(f) == {"SECRET": "a#b"}
+
 
 class TestBuildSnapshot:
     def test_whitelist_only_passthrough(self, monkeypatch):

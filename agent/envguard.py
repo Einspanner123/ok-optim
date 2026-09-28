@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 # 最小系统变量：pi / node / uv 运行所需
@@ -68,7 +69,11 @@ AGENT_KEYS = [
 
 
 def load_env_file(path: Path) -> dict[str, str]:
-    """解析 .env（KEY=VALUE，支持注释与成对引号）。文件不存在返回空。"""
+    """解析 .env（KEY=VALUE，支持注释与成对引号）。文件不存在返回空。
+
+    注释规则：整行 `#` 开头忽略；非引号值的行内注释须以空白+`#` 起始
+    （`K=v # 说明` → `v`；`K=a#b` → `a#b`，`#` 紧贴值时是值的一部分）。
+    """
     values: dict[str, str] = {}
     if not path.is_file():
         return values
@@ -79,8 +84,9 @@ def load_env_file(path: Path) -> dict[str, str]:
         key, _, val = line.partition("=")
         key = key.strip()
         val = val.strip()
+        val = re.sub(r"\s+#.*$", "", val).strip()  # 行内注释（空白+# 起）
         if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
-            val = val[1:-1]
+            val = val[1:-1]  # 引号值内的 # 不受注释剥离影响（注释已先剥离）
         if key:
             values[key] = val
     return values
