@@ -172,7 +172,7 @@ class ResultTests(unittest.TestCase):
                 with self.assertRaises(assembly.PreflightError):
                     assembly.make_run_dir("hello", slug, "stamp")
             assembly.make_run_dir("hello", "hello", "stamp")
-            with self.assertRaises(FileExistsError):
+            with self.assertRaises(assembly.PreflightError):
                 assembly.make_run_dir("hello", "hello", "stamp")
 
     def test_launcher_returns_business_exit_not_pi_exit(self):

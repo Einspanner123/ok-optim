@@ -41,8 +41,8 @@ def load_skill(task: str) -> SkillSpec:
     if not path.is_file():
         raise PreflightError(f"task '{task}' 缺少 skill.yaml: {path}")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if not isinstance(data, dict):
-        raise PreflightError(f"skill.yaml 格式错误（应为 mapping）: {path}")
+    if not isinstance(data, dict) or not data:
+        raise PreflightError(f"skill.yaml 格式错误（应为非空 mapping）: {path}")
     scripts = dict(data.get("scripts") or {})
     status_script = data.get("status_script")
     if status_script is not None and (not isinstance(status_script, str)
@@ -244,5 +244,10 @@ def make_run_dir(task: str, slug: str, ts: str) -> Path:
     run_dir = REPO_ROOT / "runs" / ts / task / slug
     if run_dir.resolve() != run_dir:
         raise PreflightError("run directory must not traverse symlinks")
-    run_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise PreflightError(
+            f"run directory already exists (timestamp collision?): {run_dir}"
+        ) from exc
     return run_dir
