@@ -90,7 +90,7 @@ def ensure_node() -> Path:
     print(f"[setup] sha256 校验通过: {digest[:16]}...")
     print("[setup] 解压 ...")
     with tarfile.open(tarball) as tf:
-        tf.extractall(VENDOR_DIR)  # noqa: S202 - 受控目录
+        tf.extractall(VENDOR_DIR, filter="data")  # noqa: S202 - 受控目录
     tarball.unlink()
     if not node_bin().is_file():
         raise SystemExit(f"node 解压异常，缺少 {node_bin()}")
