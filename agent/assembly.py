@@ -29,7 +29,6 @@ class SkillSpec:
     required_env: list[str]
     optional_env: list[str]
     scripts: dict[str, dict]
-    status_script: str | None = None
 
 
 def task_dir(task: str) -> Path:
@@ -43,18 +42,12 @@ def load_skill(task: str) -> SkillSpec:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict) or not data:
         raise PreflightError(f"skill.yaml 格式错误（应为非空 mapping）: {path}")
-    scripts = dict(data.get("scripts") or {})
-    status_script = data.get("status_script")
-    if status_script is not None and (not isinstance(status_script, str)
-                                      or status_script not in scripts):
-        raise PreflightError("status_script must name a declared task script")
     return SkillSpec(
         name=data.get("name", task),
         description=data.get("description", ""),
         required_env=list(data.get("required_env") or []),
         optional_env=list(data.get("optional_env") or []),
-        scripts=scripts,
-        status_script=status_script,
+        scripts=dict(data.get("scripts") or {}),
     )
 
 

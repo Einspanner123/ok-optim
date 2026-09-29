@@ -9,12 +9,10 @@ optional_env:
   - INGEST_MODEL_NAME
   - INGEST_VENUE
   - INGEST_YEAR
-  - INGEST_COMMIT
   - INGEST_APPLY_AUTHORIZED
-status_script: candidate
 scripts:
-  candidate:
-    args: {action: str, "slug?": str, "payload?": str, "verdict?": str, "evidence?": str}
+  hub_query:
+    args: {"repo?": str, "model?": str, "list?": bool}
   scholar_lookup:
     args: {seed: str, "limit?": int}
   search_arxiv:
@@ -22,18 +20,18 @@ scripts:
   web_search:
     args: {query: str, "limit?": int}
   github_search:
-    args: {query: str, "probe?": bool, "slug?": str}
+    args: {query: str, "probe?": bool, "title?": str, "arxiv_id?": str, "authors?": str, "code_availability?": str}
   fetch_page:
     args: {url: str, "want?": str}
   download_pdf:
-    args: {slug: str, paper_url: str}
+    args: {paper_url: str, "arxiv_id?": str, "doi?": str, "s2_pdf?": str, "citation_pdf_url?": str}
   extract_repo_links:
-    args: {slug: str}
+    args: {}
   acquire_repo:
-    args: {slug: str, repo_url: str, "commit?": str}
+    args: {repo_url: str}
   stage_entry:
-    args: {slug: str}
+    args: {payload: str}
   apply_entry:
-    args: {slug: str, "confirm?": bool}
+    args: {"confirm?": bool}
   audit_scan:
-    args: {"key?": str}
+    args: {"model?": str}

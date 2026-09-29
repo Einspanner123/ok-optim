@@ -15,6 +15,72 @@ from hubkit.schema import CSV_COLUMNS, INNER_README, MODELS_CSV, OUTER_README
 BULLET_RE = re.compile(r"^\* \*\*\((.+?)\)")
 TABLE_ROW_RE = re.compile(r"^\| \*\*(.+?)\*\* \|")
 
+GITHUB_URL_RE = re.compile(
+    r"^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)"
+    r"(?:\.git)?(?:/.*)?$", re.I)
+BARE_REPO_RE = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")
+
+
+def repo_key(repo_url: str) -> str:
+    """归一化仓库地址为去重主键（小写）。
+
+    GitHub URL / ``owner/repo`` → ``owner/repo``（剥 .git、尾斜杠与子路径）；
+    其余仓库域（gitlab/HF/zenodo…）保留小写完整 URL。
+    canonical 语义（2026-09-29 决策）：GitHub 改名后旧地址会重定向到新全名，
+    本函数只做文本归一化；canonical 全名（gh api ``meta.full_name``）由 ingest
+    probe 解析，并以新地址为键——仓库地址变了即视为另一篇论文。
+    """
+    if not isinstance(repo_url, str) or not repo_url.strip():
+        raise ValueError("repo_url 为空")
+    url = repo_url.strip()
+    m = GITHUB_URL_RE.match(url)
+    if m:
+        return f"{m[1]}/{m[2]}".lower()
+    m = BARE_REPO_RE.match(url)
+    if m and ".." not in url:
+        return f"{m[1]}/{m[2]}".lower()
+    return url.rstrip("/").lower()
+
+
+def _compact(row: dict) -> dict:
+    return {key: row[key] for key in ("model_name", "paper_title", "year",
+                                      "venue", "repo_url")}
+
+
+def _rows(hub: Path) -> list[dict]:
+    rows, error = load_models_csv(hub)
+    if error:
+        raise ValueError(error)
+    return [row for row in rows if "__fields__" not in row]
+
+
+def find_by_repo(hub: Path, repo_url: str) -> dict | None:
+    """按仓库主键查已入库条目；未入库返回 None。"""
+    key = repo_key(repo_url)
+    for row in _rows(hub):
+        try:
+            if repo_key(row["repo_url"]) == key:
+                return row
+        except ValueError:
+            continue
+    return None
+
+
+def find_by_model(hub: Path, model_name: str) -> dict | None:
+    """model_name 占用检查（大小写不敏感）；未占用返回 None。"""
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError("model_name 为空")
+    want = model_name.strip().lower()
+    for row in _rows(hub):
+        if row["model_name"].lower() == want:
+            return row
+    return None
+
+
+def list_entries(hub: Path) -> list[dict]:
+    """全部已入库条目的紧凑名单（保持 CSV 行序）。"""
+    return [_compact(row) for row in _rows(hub)]
+
 
 def load_models_csv(hub: Path) -> tuple[list[dict], str | None]:
     """读取 models.csv。

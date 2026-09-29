@@ -2,7 +2,7 @@
 
 仅 task/ingest/scripts/ 内部使用。契约（architecture.md「检索接口抽象」）：
 - 各通道限流（S2 1req/s、arXiv ≥3s、gh api 滑动窗口 30req/min、网页 1req/2s/域名）
-- 响应按查询键磁盘缓存（.ingest/cache/），重复查询零网络
+- 响应按查询键磁盘缓存（runs/.cache/ingest/，纯内容寻址），重复查询零网络
 - httpx + Mozilla UA；代理经 envguard 注入（ALL_PROXY / HTTPS_PROXY）
 """
 
@@ -16,12 +16,13 @@ from pathlib import Path
 
 import httpx
 
-from _state import INGEST_ROOT, REPO_ROOT
+from _state import REPO_ROOT
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
-CACHE_ROOT = INGEST_ROOT / "cache"
+# 纯内容寻址缓存：无业务语义，跨 run 复用安全
+CACHE_ROOT = REPO_ROOT / "runs" / ".cache" / "ingest"
 
 # 每域名最小请求间隔（秒）；未列出的域名走默认
 DOMAIN_INTERVALS = {

@@ -9,7 +9,7 @@ export interface Policy {
 }
 export interface CommandPlan { executable: string; args: string[] }
 
-const READ_DIRS = ["task", "runs", "single-cell-hub", "docs", ".ingest"];
+const READ_DIRS = ["task", "runs", "single-cell-hub", "docs"];
 const READ_FILES = ["AGENTS.md", "README.md", "pyproject.toml", "main.py",
   ".env.example", ".python-version"];
 

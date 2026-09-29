@@ -6,7 +6,7 @@
     仅作者匹配                   → author_maintained
     单项强证据（README互认 或 CodeAvailability）→ likely（needs_human）
     其余                         → unverified
-全部离线：gh_api / load_candidate_raw 打桩。
+全部离线：gh_api 打桩，证据上下文经 context dict / CLI 参数传入（无状态）。
 fixtures 设计注意：中性 owner（sctools）不得与作者姓（doe）撞车。
 """
 
@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "task/ingest/script
 
 import github_search as gs  # noqa: E402
 
-CAND = {
+CONTEXT = {
     "paper_title": "Universal Cell Embeddings foundation model",
     "arxiv_id": "2305.16175",
     "authors": ["Jane Doe"],
@@ -59,10 +59,13 @@ def _gh(meta, readme_text=None, profile=None):
     return fake_gh_api
 
 
-def _meta(login="sctools", fork=False, stars=12, description="single-cell tools"):
+def _meta(login="sctools", fork=False, stars=12, description="single-cell tools",
+          full_name=None):
+    name = full_name or f"{login}/repo"
     return {"owner": {"login": login}, "fork": fork,
             "stargazers_count": stars, "description": description,
-            "html_url": f"https://github.com/{login}/repo"}
+            "full_name": name,
+            "html_url": f"https://github.com/{name}"}
 
 
 README_WITH_PHRASE = "we release universal cell embeddings at github.com/x\n"
@@ -70,24 +73,18 @@ README_WITH_ARXIV = "preprint arxiv 2305.16175\n"
 README_NEUTRAL = "a toolkit for scRNA-seq analysis\n"
 
 
-@pytest.fixture()
-def cand(monkeypatch):
-    monkeypatch.setattr(gs, "load_candidate_raw", lambda slug: dict(CAND))
-
-
-def _probe(monkeypatch, meta, readme_text, cand_over=None, profile=None):
-    context = dict(CAND)
-    context.update(cand_over or {})
-    monkeypatch.setattr(gs, "load_candidate_raw", lambda slug: context)
+def _probe(monkeypatch, meta, readme_text, context_over=None, profile=None):
+    context = {**CONTEXT, **(context_over or {})}
     monkeypatch.setattr(gs, "gh_api", _gh(meta, readme_text, profile))
-    return gs.probe("sctools/repo", "slug")
+    return gs.probe("sctools/repo", context)
 
 
 class TestVerdictMatrix:
     def test_code_availability_and_readme_recognition_official(self, monkeypatch):
         r = _probe(monkeypatch, _meta(), README_WITH_PHRASE,
-                   cand_over={"code_availability": True})
+                   context_over={"code_availability": True})
         assert r["verdict"] == "official"
+        assert "renamed_from" not in r
 
     def test_readme_and_author_match_official(self, monkeypatch):
         r = _probe(monkeypatch, _meta(), README_WITH_PHRASE,
@@ -100,7 +97,7 @@ class TestVerdictMatrix:
 
     def test_code_availability_alone_is_likely(self, monkeypatch):
         r = _probe(monkeypatch, _meta(), None,
-                   cand_over={"code_availability": True})
+                   context_over={"code_availability": True})
         assert r["verdict"] == "likely"
 
     def test_author_match_alone_is_author_maintained(self, monkeypatch):
@@ -123,6 +120,22 @@ class TestVerdictMatrix:
         assert r["evidence"]["readme_recognition"] is False
 
 
+class TestCanonicalRename:
+    def test_meta_full_name_differs_marks_renamed_from(self, monkeypatch):
+        # gh api 返回的 canonical 全名 ≠ 请求名 → renamed_from 标注，
+        # 且去重键（repo 字段）取 canonical 新地址
+        r = _probe(monkeypatch, _meta(full_name="sctools/repo-moved"),
+                   README_WITH_PHRASE, profile={"name": "Jane Doe"})
+        assert r["renamed_from"] == "sctools/repo"
+        assert r["repo"] == "sctools/repo-moved"
+        assert r["repo_url"] == "https://github.com/sctools/repo-moved"
+
+    def test_case_only_difference_is_not_a_rename(self, monkeypatch):
+        r = _probe(monkeypatch, _meta(full_name="SCTools/Repo"),
+                   README_WITH_PHRASE)
+        assert "renamed_from" not in r
+
+
 class TestEvidenceDetails:
     def test_author_match_uses_family_name(self, monkeypatch):
         r = _probe(monkeypatch, _meta(), None, profile={"name": "Jane Doe"})
@@ -131,7 +144,7 @@ class TestEvidenceDetails:
     def test_family_name_too_short_ignored(self, monkeypatch):
         # 作者姓 <3 字符不参与匹配（防误报）
         r = _probe(monkeypatch, _meta(), None,
-                   cand_over={"authors": ["Al Wu"]}, profile={"name": "Wu X"})
+                   context_over={"authors": ["Al Wu"]}, profile={"name": "Wu X"})
         assert r["evidence"]["author_match"] is False
 
     def test_not_fork_evidence(self, monkeypatch):
@@ -144,14 +157,11 @@ class TestEvidenceDetails:
         assert "scRNA" in r["evidence"]["description"]
 
     def test_repo_404_unverified_with_error(self, monkeypatch):
-        context = dict(CAND)
-        monkeypatch.setattr(gs, "load_candidate_raw", lambda slug: context)
-
         def fake_gh(path, params=None, headers=None):
             return FakeResp(404)
 
         monkeypatch.setattr(gs, "gh_api", fake_gh)
-        r = gs.probe("sctools/ghost", "slug")
+        r = gs.probe("sctools/ghost", dict(CONTEXT))
         assert r["verdict"] == "unverified"
         assert r["evidence"] == {"error": "repo 404"}
 
@@ -173,24 +183,20 @@ class TestParseRepo:
 
 
 class TestMain:
+    def _argv(self, extra):
+        return ["github_search.py", "https://github.com/sctools/repo", "--probe",
+                "--title", CONTEXT["paper_title"], "--arxiv-id", CONTEXT["arxiv_id"],
+                "--authors", "Jane Doe", *extra, "--json"]
+
     def test_likely_prints_needs_human_to_stderr(self, monkeypatch, capsys):
-        context = dict(CAND)
-        monkeypatch.setattr(gs, "load_candidate_raw", lambda slug: context)
         monkeypatch.setattr(gs, "gh_api", _gh(_meta(), README_WITH_PHRASE))
-        monkeypatch.setattr(sys, "argv",
-                            ["github_search.py", "https://github.com/sctools/repo", "--probe",
-                             "--slug", "slug", "--json"])
+        monkeypatch.setattr(sys, "argv", self._argv([]))
         assert gs.main() == 0
         assert "needs_human" in capsys.readouterr().err
 
     def test_official_exits_clean(self, monkeypatch, capsys):
-        context = dict(CAND, code_availability=True)
-        monkeypatch.setattr(gs, "load_candidate_raw", lambda slug: context)
         monkeypatch.setattr(gs, "gh_api", _gh(_meta(), README_WITH_PHRASE))
-        monkeypatch.setattr(sys, "argv",
-                            ["github_search.py", "https://github.com/sctools/repo", "--probe",
-                             "--slug", "slug", "--json"])
+        monkeypatch.setattr(sys, "argv", self._argv(["--code-availability", "yes"]))
         assert gs.main() == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["verdict"] == "official"
-

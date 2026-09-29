@@ -3,7 +3,8 @@
 
     S2 openAccessPdf → arXiv /pdf/ → citation_pdf_url → Unpaywall → pdf_needs_manual
 
-落地校验：%PDF magic + ≥50KB；写入 candidates/<slug>/paper/<model_name|slug>.pdf。
+落地校验：%PDF magic + ≥50KB；写入 <AGENT_RUN_DIR>/paper/paper.pdf。
+可选线索经 --arxiv-id / --doi / --s2-pdf / --citation-pdf-url 传入（无状态）。
 exit: 0 下载成功 / 2 needs_human（全链失败，status=pdf_needs_manual）/ 3 fatal。
 """
 
@@ -14,7 +15,7 @@ import signal
 import sys
 from pathlib import Path
 
-from _state import _stdio_json, candidate_dir, load_candidate_raw
+from _state import _stdio_json, workdir
 from _net import http_get, http_get_stream, load_dotenv
 from _net import extract_metadata
 from hubkit.schema import PDF_MAGIC, PDF_MIN_BYTES
@@ -92,20 +93,19 @@ def try_chain(cand: dict) -> tuple[bytes, str] | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="download_pdf: PDF 多源链")
-    parser.add_argument("slug")
     parser.add_argument("paper_url", help="论文落地页 URL（供 citation_pdf_url 兜底）")
+    parser.add_argument("--arxiv-id", default=None, help="arXiv ID（/pdf/ 通道）")
+    parser.add_argument("--doi", default=None, help="DOI（Unpaywall 通道）")
+    parser.add_argument("--s2-pdf", default=None, help="S2 openAccessPdf URL（首选通道）")
+    parser.add_argument("--citation-pdf-url", default=None, help="出版方 citation_pdf_url")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     load_dotenv()
 
-    try:
-        cand = load_candidate_raw(args.slug)
-    except Exception as exc:
-        print(f"needs_human: {exc}", file=sys.stderr)
-        return 2
-    cand["paper_url"] = args.paper_url
-    cdir = candidate_dir(args.slug)
-    (cdir / "paper").mkdir(parents=True, exist_ok=True)
+    cand = {"paper_url": args.paper_url, "arxiv_id": args.arxiv_id, "doi": args.doi,
+            "openaccesspdf_url": args.s2_pdf, "citation_pdf_url": args.citation_pdf_url}
+    paper_dir = workdir() / "paper"
+    paper_dir.mkdir(parents=True, exist_ok=True)
 
     previous_handler = signal.signal(signal.SIGALRM, _deadline_expired)
     signal.setitimer(signal.ITIMER_REAL, 90.0)
@@ -117,16 +117,15 @@ def main() -> int:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_handler)
     if not got:
-        payload = {"slug": args.slug, "status": "pdf_needs_manual",
+        payload = {"status": "pdf_needs_manual",
                    "tried": [s for s, _ in chain_urls(cand)]}
         _stdio_json(payload, args.json)
         print("needs_human: 多源链全部失败（pdf_needs_manual）", file=sys.stderr)
         return 2
     data, source = got
-    name = cand.get("model_name") or args.slug
-    pdf_path = cdir / "paper" / f"{name}.pdf"
+    pdf_path = paper_dir / "paper.pdf"
     pdf_path.write_bytes(data)
-    payload = {"slug": args.slug, "status": "downloaded", "source": source,
+    payload = {"status": "downloaded", "source": source,
                "path": str(pdf_path), "bytes": len(data)}
     _stdio_json(payload, args.json)
     return 0

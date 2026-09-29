@@ -1,7 +1,7 @@
 """extract_repo_links 测试：仓库链接提取与 Code Availability 段落（离线）。
 
 extract() 依赖 pypdf 读 PDF——用 FakeReader 打桩，正文即测试文本。
-main() 流程用隔离 candidate 目录（monkeypatch _state 入口）。
+main() 流程用隔离 run 目录（monkeypatch erl.workdir）。
 """
 
 import json
@@ -82,43 +82,45 @@ class TestExtract:
 
 
 @pytest.fixture()
-def cand(tmp_path: Path, monkeypatch):
-    cdir = tmp_path / "candidates" / "uce"
-    (cdir / "paper").mkdir(parents=True)
-    (cdir / "paper" / "uce.pdf").write_bytes(b"%PDF-1.4 stub")
-    monkeypatch.setattr(erl, "load_candidate_raw", lambda slug: {"slug": "uce"})
-    monkeypatch.setattr(erl, "candidate_dir", lambda slug: cdir)
-    return cdir
+def workdir(tmp_path: Path, monkeypatch):
+    run_dir = tmp_path / "runs" / "t1" / "ingest" / "seed"
+    (run_dir / "paper").mkdir(parents=True)
+    (run_dir / "paper" / "paper.pdf").write_bytes(b"%PDF-1.4 stub")
+    monkeypatch.setattr(erl, "workdir", lambda: run_dir)
+    return run_dir
 
 
-def _run_main(texts, cand):
-    with patch("pypdf.PdfReader", _reader_for(*texts)):
-        monkeypatch_argv = patch.object(sys, "argv",
-                                        ["extract_repo_links.py", "uce", "--json"])
-        with monkeypatch_argv:
-            return erl.main()
+def _run_main(texts, workdir):
+    with patch("pypdf.PdfReader", _reader_for(*texts)), \
+         patch.object(sys, "argv", ["extract_repo_links.py", "--json"]):
+        return erl.main()
 
 
 class TestMain:
-    def test_found_payload_and_cache(self, cand, capsys):
-        assert _run_main([FULLTEXT], cand) == 0
+    def test_found_payload_and_cache(self, workdir, capsys):
+        assert _run_main([FULLTEXT], workdir) == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["found"] is True
         assert payload["links"][0] == "https://github.com/sctools/uce"
-        assert (cand / "cache" / "fulltext.txt").is_file()
+        assert (workdir / "cache" / "fulltext.txt").is_file()
         assert "none_evidence" not in payload
 
-    def test_no_links_records_none_evidence(self, cand, capsys):
-        assert _run_main(["no links here"], cand) == 0
+    def test_no_links_records_none_evidence(self, workdir, capsys):
+        assert _run_main(["no links here"], workdir) == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["found"] is False
         assert payload["none_evidence"] == "全文无仓库链接"
 
     def test_missing_pdf_is_fatal(self, tmp_path: Path, monkeypatch, capsys):
-        cdir = tmp_path / "c" / "empty"
-        cdir.mkdir(parents=True)
-        monkeypatch.setattr(erl, "load_candidate_raw", lambda slug: {})
-        monkeypatch.setattr(erl, "candidate_dir", lambda slug: cdir)
-        monkeypatch.setattr(sys, "argv", ["extract_repo_links.py", "empty", "--json"])
+        run_dir = tmp_path / "runs" / "t1"
+        (run_dir / "paper").mkdir(parents=True)
+        monkeypatch.setattr(erl, "workdir", lambda: run_dir)
+        monkeypatch.setattr(sys, "argv", ["extract_repo_links.py", "--json"])
         assert erl.main() == 3
         assert "无 PDF" in capsys.readouterr().err
+
+    def test_multiple_pdfs_are_fatal(self, workdir, monkeypatch, capsys):
+        (workdir / "paper" / "another.pdf").write_bytes(b"%PDF-1.4 stub")
+        monkeypatch.setattr(sys, "argv", ["extract_repo_links.py", "--json"])
+        assert erl.main() == 3
+        assert "多个" in capsys.readouterr().err

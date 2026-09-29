@@ -25,7 +25,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from _state import _stdio_json, candidate_dir, load_candidate_raw
+from _state import _stdio_json, workdir
 from _net import gh_api, http_get, http_get_stream, load_dotenv
 from hubkit.schema import CODE_EXTS
 
@@ -209,19 +209,12 @@ def _sdist(package: str, repo_dir: Path) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="acquire_repo: 仓库快照三通道")
-    parser.add_argument("slug")
     parser.add_argument("repo_url", help="github / huggingface URL，或 pypi:<package>")
-    parser.add_argument("--commit", default=None, help="指定 commit（可选）")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     load_dotenv()
 
-    try:
-        load_candidate_raw(args.slug)
-    except Exception as exc:
-        print(f"needs_human: {exc}", file=sys.stderr)
-        return 2
-    repo_dir = candidate_dir(args.slug) / "repo"
+    repo_dir = workdir() / "repo"
     if repo_dir.exists():
         if repo_dir.is_dir() and not repo_dir.is_symlink() and not any(repo_dir.iterdir()):
             repo_dir.rmdir()  # A failed prior acquisition left only an empty placeholder.

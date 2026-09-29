@@ -1,30 +1,33 @@
-"""Internal candidate/ledger storage. No CLI and no hub writes."""
+"""ingest 共享底座（无状态）：run 工作区、结果落盘、通用小工具。
+
+无状态契约（architecture.md「任务通用契约」）：
+- 跨 run 不保存业务状态（无 candidate/ledger）。本次运行的条目材料（paper/、
+  repo/）与产物（staged/）都写在 launcher 注入的 AGENT_RUN_DIR 下
+- HTTP 缓存 runs/.cache/ingest/ 纯内容寻址，无业务语义，跨 run 复用安全
+- 本模块无 CLI，不直接写 single-cell-hub
+"""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HUB = REPO_ROOT / "single-cell-hub"
-INGEST_ROOT = REPO_ROOT / ".ingest"
-LEDGER = INGEST_ROOT / "ledger.jsonl"
-VERDICTS = {"official", "author_maintained", "likely", "none", "unavailable"}
-REQUIRED_CANDIDATE_FIELDS = ("model_name", "paper_title", "paper_url", "year",
-                             "venue", "repo_url", "framework", "license", "verdict")
+RUNS_ROOT = REPO_ROOT / "runs"
 
-
-def missing_candidate_fields(cand: dict) -> list[str]:
-    """Fields required by staging, shared with the read-only status view."""
-    return [field for field in REQUIRED_CANDIDATE_FIELDS if not cand.get(field)]
-NONE_EVIDENCE_MARKERS = ("全文无仓库链接", "no runnable code")
+ENTRY_FIELDS = ("model_name", "paper_title", "paper_url", "year",
+                "venue", "repo_url", "framework", "license", "verdict")
 
 
 class IngestError(Exception):
     """Operation needs correction or human input."""
+
+
+def missing_entry_fields(entry: dict) -> list[str]:
+    """Fields required by staging."""
+    return [field for field in ENTRY_FIELDS if not entry.get(field)]
 
 
 def now_iso() -> str:
@@ -37,10 +40,15 @@ def contained(root: Path, path: Path) -> Path:
     return path
 
 
-def candidate_dir(slug: str) -> Path:
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", slug):
-        raise IngestError(f"非法 slug: {slug!r}")
-    return contained(INGEST_ROOT, INGEST_ROOT / "candidates" / slug)
+def workdir() -> Path:
+    """本次运行的工作区 = AGENT_RUN_DIR（runs/<ts>/<task>/<slug>/）。
+
+    经 launcher 运行时由 assembly 注入；缺失说明绕过了 ok CLI，拒绝执行。
+    """
+    run_dir = os.environ.get("AGENT_RUN_DIR")
+    if not run_dir:
+        raise IngestError("AGENT_RUN_DIR 未注入：请经 ok CLI 运行，不要独立执行任务脚本")
+    return contained(RUNS_ROOT, Path(run_dir))
 
 
 def atomic_json(path: Path, data: dict) -> None:
@@ -50,91 +58,20 @@ def atomic_json(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
-def load_candidate_raw(slug: str) -> dict:
-    path = contained(candidate_dir(slug), candidate_dir(slug) / "candidate.json")
-    if not path.is_file():
-        raise IngestError(f"candidate.json 不存在: {path}")
-    cand = json.loads(path.read_text(encoding="utf-8"))
-    cand["slug"] = slug
-    return cand
+def progress(name: str, status: str, detail: dict) -> None:
+    """Publish the run result contract from actual script outcomes.
 
-
-def update_candidate(slug: str, patch: dict) -> dict:
-    if not isinstance(patch, dict):
-        raise IngestError("payload 必须是 JSON object")
-    path = candidate_dir(slug) / "candidate.json"
-    cand = load_candidate_raw(slug) if path.exists() else {"slug": slug}
-
-    def merge(base, values):
-        for key, value in values.items():
-            if key == "slug":
-                continue
-            if isinstance(value, dict) and isinstance(base.get(key), dict):
-                merge(base[key], value)
-            else:
-                base[key] = value
-
-    merge(cand, patch)
-    if not cand.get("paper_title") or not cand.get("paper_url"):
-        raise IngestError("候选必须包含 paper_title / paper_url")
-    cand["updated_at"] = now_iso()
-    atomic_json(path, cand)
-    return cand
-
-
-def ledger_key(cand: dict) -> str:
-    if cand.get("doi"):
-        return "doi:" + cand["doi"].strip().lower()
-    title = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", cand["paper_title"].lower())).strip()
-    return "title:" + hashlib.sha256(title.encode()).hexdigest()[:12]
-
-
-def paper_hash(rec: dict) -> str:
-    basis = "|".join(str(rec.get(k, "")) for k in ("key", "title", "verdict", "repo_url", "commit"))
-    return hashlib.sha256(basis.encode()).hexdigest()[:12]
-
-
-def load_ledger() -> list[dict]:
-    if not LEDGER.is_file():
-        return []
-    return [json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-
-def latest_by_key(records: list[dict]) -> dict[str, dict]:
-    return {rec["key"]: rec for rec in records}
-
-
-def append_ledger(cand: dict, verdict: str, evidence: str, *, applied: bool = False) -> dict:
-    if verdict not in VERDICTS or (applied and verdict not in {"official", "author_maintained"}):
-        raise IngestError("非法台账结论")
-    if verdict == "none" and not any(mark in evidence for mark in NONE_EVIDENCE_MARKERS):
-        raise IngestError("none 缺少现有契约要求的确定性证据")
-    rec = {"key": ledger_key(cand), "title": cand["paper_title"], "verdict": verdict,
-           "repo_url": cand.get("repo_url", ""), "commit": cand.get("commit_hash", ""),
-           "evidence": evidence, "applied": applied, "checked_at": now_iso()}
-    rec["paper_hash"] = paper_hash(rec)
-    LEDGER.parent.mkdir(parents=True, exist_ok=True)
-    with LEDGER.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    return rec
-
-
-def progress(slug: str, status: str, detail: dict) -> None:
-    """Publish the existing report/task-result contract from actual script outcomes."""
-    cand = load_candidate_raw(slug)
-    report = (f"# {cand['paper_title']}\n\n状态: {status}\n\n"
-              + "```json\n" + json.dumps({"candidate": cand, "result": detail}, ensure_ascii=False, indent=2)
-              + "\n```\n")
-    (candidate_dir(slug) / "report.md").write_text(report, encoding="utf-8")
+    name 是条目身份（model_name）。applied 计数达到 INGEST_MAX_NEW 才算 done。
+    """
     run_id, run_path = os.environ.get("AGENT_RUN_ID"), os.environ.get("AGENT_RUN_DIR")
     if not run_id or not run_path:
         return
-    run = contained(REPO_ROOT / "runs", Path(run_path))
+    run = contained(RUNS_ROOT, Path(run_path))
     path = run / "ingest.json"
     state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"run_id": run_id, "items": {}}
     if state.get("run_id") != run_id:
         raise IngestError("run identity mismatch")
-    state["items"][slug] = {"status": status, **detail}
+    state["items"][name] = {"status": status, **detail}
     atomic_json(path, state)
     applied = len({item["model_name"] for item in state["items"].values()
                    if item["status"] == "applied"})

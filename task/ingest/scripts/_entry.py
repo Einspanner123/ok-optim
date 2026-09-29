@@ -1,4 +1,8 @@
-"""Internal staging and filesystem application. Hub formatting belongs to hubkit."""
+"""Internal staging and filesystem application. Hub formatting belongs to hubkit.
+
+Stateless: the entry payload comes from the caller (CLI --payload), materials
+live under the run workdir (paper/, repo/), and staged files under staged/.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -34,36 +38,40 @@ def digest(path: Path) -> str | None:
     return h.hexdigest()
 
 
-def load_candidate(slug: str) -> tuple[dict, dict]:
-    cand = state.load_candidate_raw(slug)
-    missing = state.missing_candidate_fields(cand)
+def load_entry(payload: dict) -> tuple[dict, dict]:
+    """Validate the caller-supplied entry payload; return (entry, csv_row)."""
+    if not isinstance(payload, dict):
+        raise IngestError("payload 必须是 JSON object")
+    missing = state.missing_entry_fields(payload)
     if missing:
-        raise IngestError(f"候选缺少字段: {missing}")
-    entry_name(cand["model_name"])
-    if cand["verdict"] not in {"official", "author_maintained"}:
+        raise IngestError(f"条目缺少字段: {missing}")
+    entry_name(payload["model_name"])
+    if payload["verdict"] not in {"official", "author_maintained"}:
         raise IngestError("仅 official / author_maintained 可暂存和入库")
-    cand.setdefault("commit_hash", COMMIT_HASH_PLACEHOLDER)
-    if not (COMMIT_RE.fullmatch(cand["commit_hash"]) or cand["commit_hash"] == COMMIT_HASH_PLACEHOLDER):
+    entry = {**payload}
+    entry.setdefault("commit_hash", COMMIT_HASH_PLACEHOLDER)
+    if not (COMMIT_RE.fullmatch(entry["commit_hash"]) or entry["commit_hash"] == COMMIT_HASH_PLACEHOLDER):
         raise IngestError("非法 commit_hash")
-    row = {key: str(cand.get(key, "") or "") for key in CSV_COLUMNS}
-    return cand, row
+    row = {key: str(entry.get(key, "") or "") for key in CSV_COLUMNS}
+    return entry, row
 
 
-def material_paths(slug: str, name: str) -> tuple[Path, Path]:
-    cdir = state.candidate_dir(slug)
-    paper = state.contained(cdir, cdir / "paper")
-    pdfs = sorted(paper.glob("*.pdf"))
+def material_paths(name: str) -> tuple[Path, Path]:
+    """Materials for the current entry: run workdir paper/ + repo/."""
+    work = state.workdir()
+    paper = state.contained(work, work / "paper")
+    pdfs = sorted(paper.glob("*.pdf")) if paper.is_dir() else []
     preferred = paper / f"{name}.pdf"
     if preferred in pdfs:
         pdf = preferred
     elif len(pdfs) == 1 or (pdfs and len({digest(p) for p in pdfs}) == 1):
         pdf = pdfs[0]
     else:
-        raise IngestError("PDF 缺失或存在多个不同 PDF，请确认候选材料")
-    repo = state.contained(cdir, cdir / "repo")
+        raise IngestError("paper/ 缺 PDF 或存在多个不同 PDF，请确认材料")
+    repo = state.contained(work, work / "repo")
     if not repo.is_dir() or not any(repo.iterdir()):
-        raise IngestError("源码快照缺失")
-    state.contained(cdir, pdf)
+        raise IngestError("repo/ 源码快照缺失")
+    state.contained(work, pdf)
     return pdf, repo
 
 
@@ -95,10 +103,11 @@ def check(hub: Path, only: str | None = None) -> dict:
     return {"ok": rep.ok, "error_count": len(rep.errors), "errors": rep.errors}
 
 
-def stage(slug: str) -> dict:
-    cand, row = load_candidate(slug)
-    cdir, hub = state.candidate_dir(slug), state.HUB
-    pdf, repo = material_paths(slug, row["model_name"])
+def stage(payload: dict) -> dict:
+    entry, row = load_entry(payload)
+    work, hub = state.workdir(), state.HUB
+    work.mkdir(parents=True, exist_ok=True)
+    pdf, repo = material_paths(row["model_name"])
     rows, error = readers.load_models_csv(hub)
     if error:
         raise IngestError(error)
@@ -110,131 +119,47 @@ def stage(slug: str) -> dict:
               if commit == COMMIT_HASH_PLACEHOLDER
               else f"repository cloned from official source at commit {commit}")
     base = baseline(hub, row["model_name"])
-    files = render.entry_files(row, cand["verdict"], status, rows, indexes,
+    files = render.entry_files(row, entry["verdict"], status, rows, indexes,
                                ignore_rules.snapshot_exception(hub, row["model_name"], repo))
-    with tempfile.TemporaryDirectory(prefix="ingest-stage-", dir=cdir) as folder:
+    with tempfile.TemporaryDirectory(prefix="ingest-stage-") as folder:
         prepared = Path(folder)
         for rel, content in files.items():
             target = prepared / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-        summary = {"version": 1, "slug": slug, "model_name": row["model_name"],
-                   "candidate_hash": digest(cdir / "candidate.json"), "baseline": base,
+        summary = {"version": 2, "model_name": row["model_name"], "baseline": base,
                    "pdf": str(pdf), "pdf_hash": digest(pdf), "repo": str(repo), "repo_hash": digest(repo),
                    "files": {rel: digest(prepared / rel) for rel in files}, "checked_at": state.now_iso()}
         with tempfile.TemporaryDirectory(prefix="ingest-check-") as tmp:
             materialize(hub, prepared, summary, Path(tmp))
             summary["validation"] = check(Path(tmp), only=row["model_name"])
         state.atomic_json(prepared / "summary.json", summary)
-        staged = state.contained(cdir, cdir / "staged")
+        staged = state.contained(work, work / "staged")
         if staged.exists():
             shutil.rmtree(staged)
         prepared.rename(staged)
-    result = {"slug": slug, "staged": str(staged), **summary["validation"]}
-    state.progress(slug, "staged" if result["ok"] else "validation_failed", result)
+    result = {"model_name": row["model_name"], "staged": str(staged), **summary["validation"]}
+    state.progress(row["model_name"], "staged" if result["ok"] else "validation_failed", result)
     return result
 
 
-def status_snapshot(slug: str | None = None) -> dict:
-    """Read-only, evidence-derived status for guard feedback."""
-    if slug is None:
-        root = state.INGEST_ROOT / "candidates"
-        if not root.is_dir():
-            return {"items": [], "guidance": "No candidate records exist yet."}
-        names = sorted(p.name for p in root.iterdir() if p.is_dir())
-        return {"items": [status_snapshot(name) for name in names], "truncated": False}
-    cdir = state.candidate_dir(slug)
-    if not (cdir / "candidate.json").is_file():
-        return {"slug": slug, "phase": "candidate_missing",
-                "missing": ["candidate.json"],
-                "guidance": "Create a candidate from a verified paper lead."}
-    cand = state.load_candidate_raw(slug)
-    result = {"slug": slug, "phase": "", "missing": [], "guidance": ""}
-    if cand.get("paper_title"):
-        result["paper_title"] = cand["paper_title"]
-    try:
-        rec = state.latest_by_key(state.load_ledger()).get(state.ledger_key(cand))
-    except (KeyError, TypeError):
-        rec = None
-    if rec and rec.get("applied"):
-        result.update(phase="applied", guidance="This candidate is already applied. Move to another candidate or finish.")
-        return result
-    if rec and not rec.get("applied") and rec.get("checked_at", "") >= cand.get("updated_at", ""):
-        result.update(phase="pending", guidance="A human decision or unresolved evidence is recorded. Continue independent work.")
-        return result
-    paper = cdir / "paper"
-    materials = []
-    if not paper.is_dir() or not any(paper.glob("*.pdf")):
-        materials.append("PDF")
-    if not (cdir / "repo").is_dir() or not any((cdir / "repo").iterdir()):
-        materials.append("repository snapshot")
-    if materials:
-        result.update(phase="materials_missing", missing=materials,
-                      guidance="Acquire the missing materials or record why the channel is unavailable.")
-        return result
-    missing = state.missing_candidate_fields(cand)
-    if missing:
-        result.update(phase="metadata_incomplete", missing=missing,
-                      guidance="Verify and save the missing fields with candidate set; record pending if verification cannot continue.")
-        return result
-    if cand["verdict"] not in {"official", "author_maintained"}:
-        result.update(phase="human_review",
-                      guidance="Repository officiality is unresolved. Record pending or ask the human in an interactive run.")
-        return result
-    summary_path = cdir / "staged" / "summary.json"
+def apply() -> dict:
+    """Apply the staged entry under the run workdir; the exact staged files are applied."""
+    work, hub = state.workdir(), state.HUB
+    staged = state.contained(work, work / "staged")
+    summary_path = state.contained(staged, staged / "summary.json")
     if not summary_path.is_file():
-        result.update(phase="ready_to_stage", guidance="Run stage_entry and follow its validation result.")
-        return result
-    try:
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        if not summary.get("validation", {}).get("ok"):
-            errors = summary.get("validation", {}).get("errors", [])
-            if errors and all(error.get("model") != cand["model_name"] for error in errors):
-                result.update(phase="staged_stale",
-                              guidance="The saved validation errors concern other entries. Run stage_entry again under the current validation rules.")
-            else:
-                result.update(phase="validation_failed",
-                              error_count=summary.get("validation", {}).get("error_count", 0),
-                              guidance="Correct the reported validation errors before staging again.")
-            return result
-        pdf, repo = material_paths(slug, cand["model_name"])
-        fresh = (summary.get("version") == 1
-                 and summary.get("slug") == slug
-                 and summary.get("model_name") == cand["model_name"]
-                 and summary.get("candidate_hash") == digest(cdir / "candidate.json")
-                 and summary.get("baseline") == baseline(state.HUB, cand["model_name"])
-                 and summary.get("pdf") == str(pdf)
-                 and summary.get("repo") == str(repo)
-                 and summary.get("pdf_hash") == digest(pdf)
-                 and summary.get("repo_hash") == digest(repo)
-                 and all(digest(state.contained(cdir / "staged", cdir / "staged" / rel)) == saved
-                         for rel, saved in summary.get("files", {}).items()))
-        if fresh:
-            result.update(phase="staged", guidance="A valid staged entry exists. Apply only when this run is authorized.")
-        else:
-            result.update(phase="staged_stale", guidance="Candidate, materials, staged files, or hub baseline changed. Run stage_entry again.")
-    except (OSError, ValueError, KeyError, TypeError, IngestError) as exc:
-        result.update(phase="staged_stale", guidance="The staged summary could not be verified. Run stage_entry again.",
-                      )
-    return result
-
-
-def apply(slug: str) -> dict:
-    cand, row = load_candidate(slug)
-    name, hub, cdir = row["model_name"], state.HUB, state.candidate_dir(slug)
-    staged = state.contained(cdir, cdir / "staged")
-    summary_path = state.contained(cdir, staged / "summary.json")
-    if not summary_path.is_file():
-        raise IngestError("缺少 stage_entry 产物")
+        raise IngestError("缺少 stage_entry 产物，请先运行 stage_entry")
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    if summary.get("version") != 1 or summary.get("slug") != slug or summary.get("model_name") != name:
-        raise IngestError("旧版或不匹配的 staged，请重新 stage")
-    pdf, repo = material_paths(slug, name)
-    if (summary["candidate_hash"] != digest(cdir / "candidate.json")
-            or summary["baseline"] != baseline(hub, name)
+    name = summary.get("model_name")
+    if summary.get("version") != 2 or not name:
+        raise IngestError("旧版或不完整的 staged，请重新 stage")
+    entry_name(name)
+    pdf, repo = material_paths(name)
+    if (summary["baseline"] != baseline(hub, name)
             or summary["pdf"] != str(pdf) or summary["repo"] != str(repo)
             or summary["pdf_hash"] != digest(pdf) or summary["repo_hash"] != digest(repo)):
-        raise IngestError("候选、材料或 hub 已变化，请重新 stage")
+        raise IngestError("材料或 hub 已变化，请重新 stage")
     expected = {*INDEX_FILES, f"{entry_path(name)}/README.md"}
     if set(summary["files"]) != expected:
         raise IngestError("staged 文件集合不符合契约")
@@ -261,7 +186,6 @@ def apply(slug: str) -> dict:
                     shutil.copytree(source, dest)
                 else:
                     shutil.copyfile(source, dest)
-        ledger_before = state.LEDGER.read_bytes() if state.LEDGER.exists() else None
         try:
             for rel in affected:
                 target, source = hub / rel, view / rel
@@ -275,7 +199,6 @@ def apply(slug: str) -> dict:
             validation = check(hub, only=name)
             if not validation["ok"]:
                 raise IngestError("应用后校验失败: " + json.dumps(validation, ensure_ascii=False))
-            state.append_ledger(cand, cand["verdict"], str(cand.get("code_availability") or cand.get("evidence") or ""), applied=True)
         except Exception:
             for rel in affected:
                 target = hub / rel
@@ -290,13 +213,9 @@ def apply(slug: str) -> dict:
                         shutil.copytree(source, target)
                     else:
                         shutil.copyfile(source, target)
-            if ledger_before is None:
-                state.LEDGER.unlink(missing_ok=True)
-            else:
-                state.LEDGER.write_bytes(ledger_before)
             raise
-    result = {"slug": slug, "model_name": name, "applied": True, **validation,
+    result = {"model_name": name, "applied": True, **validation,
               "git_steps": [f"cd {hub}", f"git add {entry_path(name)} " + " ".join(INDEX_FILES),
                             f'git commit -m "Update {name} entry"']}
-    state.progress(slug, "applied", result)
+    state.progress(name, "applied", result)
     return result

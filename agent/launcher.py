@@ -410,7 +410,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         "AGENT_RUN_DIR": str(run_dir),
         "AGENT_INTERACTIVE": "1" if interactive else "0",
         "AGENT_TOOL_BUDGET": str(args.tool_budget),
-        "AGENT_STATUS_SCRIPT": spec.status_script or "",
         "PI_CODING_AGENT_DIR": str(agent_dir),
         # 禁直跑令牌: bootstrap-guard 校验，缺它 pi 拒绝启动
         "AGENT_INVOKED_BY_LAUNCHER": uuid.uuid4().hex,

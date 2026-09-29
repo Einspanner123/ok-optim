@@ -56,12 +56,12 @@ test("rejects script symlinks", () => fixture(p => {
   assert.throws(() => planCommand("uv run python task/hello/scripts/link.py", p));
 }));
 
-test("ingest workspace is readable but internal modules remain unexecutable", () => fixture(p => {
-  mkdirSync(join(p.root, ".ingest/candidates/sample"), { recursive: true });
-  writeFileSync(join(p.root, ".ingest/candidates/sample/candidate.json"), "{}");
-  assert.equal(readAllowed(p.root, ".ingest/candidates/sample/candidate.json"), true);
-  symlinkSync(join(p.root, ".env"), join(p.root, ".ingest/secret"));
-  assert.equal(readAllowed(p.root, ".ingest/secret"), false);
+test("run workspace is readable but internal modules remain unexecutable", () => fixture(p => {
+  mkdirSync(join(p.root, "runs/cache/pages"), { recursive: true });
+  writeFileSync(join(p.root, "runs/cache/pages/page.html"), "ok");
+  assert.equal(readAllowed(p.root, "runs/cache/pages/page.html"), true);
+  symlinkSync(join(p.root, ".env"), join(p.root, "runs/secret"));
+  assert.equal(readAllowed(p.root, "runs/secret"), false);
   writeFileSync(join(p.root, "task/hello/scripts/_state.py"), "");
   assert.throws(() => planCommand("uv run python task/hello/scripts/_state.py", p));
   assert.throws(() => planCommand('python -c "import _state"', p));

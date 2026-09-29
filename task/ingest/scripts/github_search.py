@@ -8,10 +8,10 @@ search 模式（默认）: /search/repositories 关键词搜索 → 候选清单
     仅作者匹配                     → author_maintained
     单项强证据                     → likely（needs_human，不得静默入库）
     其余                           → unverified（继续找候选）
-证据: 论文 Code Availability 声明（candidate.json 的 code_availability 字段，
-来自 fetch_page）｜repo README 互认（标题/arXiv id）｜作者匹配（family name ↔
-owner login/name）｜元数据旁证（非 fork、description 提及）。
-exit: 0 成功（verdict 是结论性输出）/ 2 needs_human（缺 candidate 上下文）。
+证据上下文经 --title / --arxiv-id / --authors / --code-availability 传入（无状态）。
+GitHub 改名检测: gh api meta.full_name ≠ 请求名 → 输出 renamed_from（canonical
+全名作为去重键；仓库地址变了即视为另一篇论文）。
+exit: 0 成功（verdict 是结论性输出）/ 3 fatal（gh api 失败）。
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import json
 import re
 import sys
 
-from _state import _stdio_json, load_candidate_raw
+from _state import _stdio_json
 from _net import gh_api, gh_raw, load_dotenv
 
 
@@ -58,14 +58,12 @@ def author_match(authors: list[str], owner: dict, profile: dict) -> tuple[bool, 
     return False, ""
 
 
-def probe(full_name: str, slug: str | None) -> dict:
-    cand: dict = {}
-    if slug:
-        cand = load_candidate_raw(slug)
-    title = cand.get("paper_title", "")
-    arxiv_id = cand.get("arxiv_id", "")
-    authors = cand.get("authors", [])
-    code_availability = bool(cand.get("code_availability"))
+def probe(full_name: str, context: dict) -> dict:
+    """官方性判定。context: paper_title / arxiv_id / authors / code_availability。"""
+    title = context.get("paper_title", "")
+    arxiv_id = context.get("arxiv_id", "")
+    authors = context.get("authors", [])
+    code_availability = bool(context.get("code_availability"))
 
     meta = gh_api(f"/repos/{full_name}")
     if meta.status_code == 404:
@@ -74,6 +72,11 @@ def probe(full_name: str, slug: str | None) -> dict:
     meta.raise_for_status()
     meta = meta.json()
     owner = meta.get("owner") or {}
+
+    # GitHub 改名检测：canonical 全名 ≠ 请求名 → 记录 renamed_from。
+    # canonical 全名作为去重键；仓库地址变了即视为另一篇论文（2026-09-29 决策）。
+    canonical = meta.get("full_name") or full_name
+    renamed_from = full_name if canonical.lower() != full_name.lower() else None
 
     readme = ""
     r = gh_api(f"/repos/{full_name}/readme",
@@ -114,15 +117,22 @@ def probe(full_name: str, slug: str | None) -> dict:
         verdict = "likely"
     else:
         verdict = "unverified"
-    return {"verdict": verdict, "repo": full_name,
-            "repo_url": meta.get("html_url"), "evidence": evidence}
+    result = {"verdict": verdict, "repo": canonical,
+              "repo_url": meta.get("html_url"), "evidence": evidence}
+    if renamed_from:
+        result["renamed_from"] = renamed_from
+    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="github_search: 搜索/probe")
     parser.add_argument("query", help="search: 关键词；--probe: 仓库 URL 或 owner/repo")
     parser.add_argument("--probe", action="store_true", help="官方性判定模式")
-    parser.add_argument("--slug", default=None, help="probe 取论文上下文的 candidate slug")
+    parser.add_argument("--title", default="", help="probe: 论文标题（README 互认）")
+    parser.add_argument("--arxiv-id", default="", help="probe: arXiv ID（README 互认）")
+    parser.add_argument("--authors", default="", help="probe: 逗号分隔作者（姓 ↔ owner 匹配）")
+    parser.add_argument("--code-availability", default="",
+                        help="probe: Code Availability 证据文本（非空即视为有声明）")
     parser.add_argument("--limit", type=int, default=8)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -131,7 +141,10 @@ def main() -> int:
     try:
         if args.probe:
             full = parse_repo(args.query)
-            result = probe(full, args.slug)
+            context = {"paper_title": args.title, "arxiv_id": args.arxiv_id,
+                       "authors": [a.strip() for a in args.authors.split(",") if a.strip()],
+                       "code_availability": bool(args.code_availability.strip())}
+            result = probe(full, context)
             if result["verdict"] == "likely":
                 print("needs_human: 单项强证据 → likely，不得静默入库", file=sys.stderr)
         else:

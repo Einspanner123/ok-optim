@@ -1,3 +1,5 @@
+"""无状态 ingest 流程测试：run 目录材料 → stage → apply → run 结果契约。"""
+
 import csv
 import io
 import json
@@ -25,13 +27,18 @@ class IngestTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.hub = self.root / "single-cell-hub"
-        self.work = self.root / ".ingest"
-        self.work.mkdir()
-        for key, value in {"REPO_ROOT": self.root, "HUB": self.hub, "INGEST_ROOT": self.work, "LEDGER": self.work / "ledger.jsonl"}.items():
+        self.runs = self.root / "runs"
+        self.run = self.runs / "t1" / "ingest" / "seed"
+        for key, value in {"HUB": self.hub, "RUNS_ROOT": self.runs}.items():
             p = patch.object(state, key, value)
             p.start()
             self.addCleanup(p.stop)
-        p = patch.dict(os.environ, {}, clear=True)
+        p = patch.dict(os.environ, {
+            "AGENT_RUN_ID": "t1",
+            "AGENT_RUN_DIR": str(self.run),
+            "AGENT_SLUG": "seed",
+            "INGEST_MAX_NEW": "1",
+        }, clear=True)
         p.start()
         self.addCleanup(p.stop)
         self.seed = row()
@@ -54,88 +61,118 @@ class IngestTests(unittest.TestCase):
         (root / "repo/main.py").write_text("seed = 1\n")
         (root / "README.md").write_text(render.render_model_readme(item["model_name"], item, "official", "repository cloned at commit " + item["commit_hash"]), encoding="utf-8")
 
-    def candidate(self, name="New"):
+    def payload(self, name="New"):
         item = row(name)
         if name != "Seed":
             item["commit_hash"] = "b" * 40
-        slug = name.lower()
-        state.update_candidate(slug, {**item, "verdict": "official", "code_availability": "https://github.com/example/" + name})
-        cdir = state.candidate_dir(slug)
-        (cdir / "paper").mkdir()
-        # Legacy download name need not equal model_name.
-        (cdir / "paper" / f"{slug}.pdf").write_bytes(b"%PDF" + b"y" * 60000)
-        (cdir / "repo").mkdir()
-        (cdir / "repo/main.py").write_text("candidate = 2\n")
-        return slug
+        return {**item, "verdict": "official",
+                "code_availability": "https://github.com/example/" + name}
 
-    def test_status_is_read_only_and_tracks_stage_freshness(self):
-        slug = self.candidate()
-        path = state.candidate_dir(slug) / "candidate.json"
-        data = json.loads(path.read_text())
-        for field in ("framework", "license", "verdict"):
-            data.pop(field)
-        path.write_text(json.dumps(data))
-        before = path.read_bytes()
-        snapshot = entry.status_snapshot(slug)
-        self.assertEqual(snapshot["phase"], "metadata_incomplete")
-        self.assertEqual(snapshot["missing"], ["framework", "license", "verdict"])
-        self.assertEqual(path.read_bytes(), before)
-        state.update_candidate(slug, {"framework": "PyTorch", "license": "MIT",
-                                      "verdict": "official"})
-        self.assertEqual(entry.status_snapshot(slug)["phase"], "ready_to_stage")
-        self.assertTrue(entry.stage(slug)["ok"])
-        self.assertEqual(entry.status_snapshot(slug)["phase"], "staged")
+    def materials(self, pdf_name="paper.pdf"):
+        paper = self.run / "paper"
+        paper.mkdir(parents=True, exist_ok=True)
+        (paper / pdf_name).write_bytes(b"%PDF" + b"y" * 60000)
+        repo = self.run / "repo"
+        repo.mkdir(exist_ok=True)
+        (repo / "main.py").write_text("candidate = 2\n")
+
+    def test_workdir_requires_agent_run_dir(self):
+        with patch.dict(os.environ):
+            os.environ.pop("AGENT_RUN_DIR", None)
+            with self.assertRaisesRegex(state.IngestError, "AGENT_RUN_DIR"):
+                state.workdir()
+
+    def test_run_dir_outside_runs_root_rejected(self):
+        with patch.dict(os.environ, {"AGENT_RUN_DIR": str(self.root / "elsewhere")}):
+            with self.assertRaises(state.IngestError):
+                state.workdir()
+
+    def test_stage_requires_entry_fields(self):
+        self.materials()
+        payload = self.payload()
+        payload.pop("license")
+        with self.assertRaisesRegex(state.IngestError, "缺少字段"):
+            entry.stage(payload)
+
+    def test_apply_without_stage_fails(self):
+        self.materials()
+        with self.assertRaisesRegex(state.IngestError, "stage_entry"):
+            entry.apply()
+
+    def test_stage_does_not_modify_hub_and_apply_uses_exact_files(self):
+        self.materials()
+        before = entry.digest(self.hub)
+        result = entry.stage(self.payload())
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(entry.digest(self.hub), before)
+        staged = self.run / "staged"
+        expected = {rel: (staged / rel).read_bytes() for rel in INDEX_FILES}
+        with patch.object(render, "entry_files", side_effect=AssertionError("apply must not render")):
+            self.assertTrue(entry.apply()["applied"])
+        for rel, contents in expected.items():
+            self.assertEqual((self.hub / rel).read_bytes(), contents)
+        self.assertTrue(entry.check(self.hub)["ok"])
+
+    def test_single_pdf_name_need_not_match_model(self):
+        self.materials("downloaded.pdf")
+        self.assertTrue(entry.stage(self.payload())["ok"])
+
+    def test_multiple_distinct_pdfs_rejected(self):
+        self.materials("a.pdf")
+        (self.run / "paper" / "b.pdf").write_bytes(b"%PDF" + b"z" * 60000)
+        with self.assertRaisesRegex(state.IngestError, "多个不同 PDF"):
+            entry.stage(self.payload())
+
+    def test_existing_unrelated_errors_do_not_block_a_valid_new_entry(self):
+        (self.hub / entry_path("Seed") / "paper/Seed.pdf").write_bytes(b"bad legacy PDF")
+        (self.hub / ENTRIES_ROOT / "Orphan").mkdir()
+        self.assertFalse(entry.check(self.hub)["ok"])
+        self.materials()
+        self.assertTrue(entry.stage(self.payload())["ok"])
+        self.assertTrue(entry.apply()["ok"])
+        self.assertTrue(entry.check(self.hub, only="New")["ok"])
+        self.assertFalse(entry.check(self.hub)["ok"])
+
+    def test_audit_update_replaces_row_and_entry(self):
+        self.materials()
+        self.assertTrue(entry.stage(self.payload("Seed"))["ok"])
+        entry.apply()
+        rows, _ = readers.load_models_csv(self.hub)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((self.hub / entry_path("Seed") / "repo/main.py").read_text(), "candidate = 2\n")
+        self.assertFalse(audit_scan.scan()["anomalies"])
+
+    def test_hub_change_invalidates_stage(self):
+        self.materials()
+        entry.stage(self.payload())
         (self.hub / ".gitignore").write_text("# changed\n")
-        self.assertEqual(entry.status_snapshot(slug)["phase"], "staged_stale")
+        with self.assertRaisesRegex(state.IngestError, "重新 stage"):
+            entry.apply()
 
-    def test_old_unrelated_validation_errors_can_be_restaged(self):
-        slug = self.candidate()
-        self.assertTrue(entry.stage(slug)["ok"])
-        path = state.candidate_dir(slug) / "staged/summary.json"
-        summary = json.loads(path.read_text())
-        summary["validation"] = {
-            "ok": False, "error_count": 1,
-            "errors": [{"model": "Seed", "message": "bad legacy PDF"}],
-        }
-        path.write_text(json.dumps(summary))
-        self.assertEqual(entry.status_snapshot(slug)["phase"], "staged_stale")
+    def test_material_change_invalidates_stage(self):
+        self.materials()
+        entry.stage(self.payload())
+        (self.run / "repo/extra.py").write_text("extra = 1\n")
+        with self.assertRaisesRegex(state.IngestError, "重新 stage"):
+            entry.apply()
 
-    def test_acquire_repo_reuses_empty_placeholder_only(self):
-        slug = self.candidate()
-        repo = state.candidate_dir(slug) / "repo"
-        saved = repo / "main.py"
-        self.assertNotEqual(saved.stat().st_size, 0)
-        url = "https://github.com/example/New"
-        with patch.object(acquire_repo, "load_dotenv"), \
-             patch.object(sys, "argv", ["acquire_repo.py", slug, url]), \
-             patch.object(acquire_repo, "_github") as github:
-            self.assertEqual(acquire_repo.main(), 2)
-            github.assert_not_called()
-            saved.unlink()
-            self.assertEqual(entry.status_snapshot(slug)["phase"], "materials_missing")
-            github.side_effect = lambda repo_url, dest: (
-                (dest / "main.py").write_text("new = 1\n"),
-                {"channel": "github", "commit": "a" * 40, "files": 1},
-            )[1]
-            self.assertEqual(acquire_repo.main(), 0)
-            self.assertEqual((repo / "main.py").read_text(), "new = 1\n")
+    def test_staged_content_change_is_rejected(self):
+        self.materials()
+        entry.stage(self.payload())
+        (self.run / "staged/README.md").write_text("tampered")
+        with self.assertRaisesRegex(state.IngestError, "staged 内容已变化"):
+            entry.apply()
 
-    def test_status_lists_every_candidate(self):
-        for name in ("A", "B", "C", "D", "E", "F"):
-            self.candidate(name)
-        listed = entry.status_snapshot()
-        self.assertEqual(len(listed["items"]), 6)
-        self.assertFalse(listed["truncated"])
-
-    def test_newer_candidate_evidence_supersedes_pending_status(self):
-        slug = self.candidate()
-        state.append_ledger(state.load_candidate_raw(slug), "official", "old pending")
-        self.assertEqual(entry.status_snapshot(slug)["phase"], "pending")
-        path = state.candidate_dir(slug) / "candidate.json"
-        cand = json.loads(path.read_text())
-        cand["updated_at"] = "2099-01-01T00:00:00+00:00"
-        path.write_text(json.dumps(cand))
-        self.assertEqual(entry.status_snapshot(slug)["phase"], "ready_to_stage")
+    def test_post_validation_failure_restores_existing_entry_and_indexes(self):
+        self.materials()
+        entry.stage(self.payload("Seed"))
+        before = entry.digest(self.hub)
+        good = {"ok": True, "errors": [], "error_count": 0}
+        bad = {"ok": False, "errors": [{"message": "injected failure"}], "error_count": 1}
+        with patch.object(entry, "check", side_effect=[good, bad]):
+            with self.assertRaises(state.IngestError):
+                entry.apply()
+        self.assertEqual(entry.digest(self.hub), before)
 
     def test_github_archive_fallback_uses_commit_and_filters_files(self):
         blob = io.BytesIO()
@@ -166,105 +203,34 @@ class IngestTests(unittest.TestCase):
                 "https://github.com/example/repo", target), result)
             fallback.assert_called_once()
 
-    def test_stage_does_not_modify_hub_and_apply_uses_exact_files(self):
-        slug = self.candidate()
-        before = entry.digest(self.hub)
-        result = entry.stage(slug)
-        self.assertTrue(result["ok"], result)
-        self.assertEqual(entry.digest(self.hub), before)
-        stage = state.candidate_dir(slug) / "staged"
-        expected = {rel: (stage / rel).read_bytes() for rel in INDEX_FILES}
-        with patch.object(render, "entry_files", side_effect=AssertionError("apply must not render")):
-            self.assertTrue(entry.apply(slug)["applied"])
-        for rel, contents in expected.items():
-            self.assertEqual((self.hub / rel).read_bytes(), contents)
-        self.assertTrue(state.load_ledger()[-1]["applied"])
-        self.assertTrue(entry.check(self.hub)["ok"])
-
-    def test_existing_unrelated_errors_do_not_block_a_valid_new_entry(self):
-        (self.hub / entry_path("Seed") / "paper/Seed.pdf").write_bytes(b"bad legacy PDF")
-        (self.hub / ENTRIES_ROOT / "Orphan").mkdir()
-        self.assertFalse(entry.check(self.hub)["ok"])
-        slug = self.candidate()
-        self.assertTrue(entry.stage(slug)["ok"])
-        self.assertTrue(entry.apply(slug)["ok"])
-        self.assertTrue(entry.check(self.hub, only="New")["ok"])
-        self.assertFalse(entry.check(self.hub)["ok"])
-
-    def test_audit_update_replaces_row_and_entry(self):
-        slug = self.candidate("Seed")
-        self.assertTrue(entry.stage(slug)["ok"])
-        entry.apply(slug)
-        rows, _ = readers.load_models_csv(self.hub)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual((self.hub / entry_path("Seed") / "repo/main.py").read_text(), "candidate = 2\n")
-        self.assertFalse(audit_scan.scan()["anomalies"])
-
-    def test_candidate_change_invalidates_stage(self):
-        slug = self.candidate()
-        entry.stage(slug)
-        state.update_candidate(slug, {"license": "Apache-2.0"})
-        with self.assertRaisesRegex(state.IngestError, "重新 stage"):
-            entry.apply(slug)
-
-    def test_hub_change_invalidates_stage(self):
-        slug = self.candidate()
-        entry.stage(slug)
-        (self.hub / ".gitignore").write_text("# changed\n")
-        with self.assertRaisesRegex(state.IngestError, "重新 stage"):
-            entry.apply(slug)
-
-    def test_staged_content_change_is_rejected(self):
-        slug = self.candidate()
-        entry.stage(slug)
-        (state.candidate_dir(slug) / "staged/README.md").write_text("tampered")
-        with self.assertRaisesRegex(state.IngestError, "staged 内容已变化"):
-            entry.apply(slug)
-
-    def test_post_validation_failure_restores_existing_entry_and_indexes(self):
-        slug = self.candidate("Seed")
-        entry.stage(slug)
-        before = entry.digest(self.hub)
-        good = {"ok": True, "errors": [], "error_count": 0}
-        bad = {"ok": False, "errors": [{"message": "injected failure"}], "error_count": 1}
-        with patch.object(entry, "check", side_effect=[good, bad]):
-            with self.assertRaises(state.IngestError):
-                entry.apply(slug)
-        self.assertEqual(entry.digest(self.hub), before)
-        self.assertFalse(state.LEDGER.exists())
-
-    def test_ledger_write_failure_rolls_back_new_entry(self):
-        slug = self.candidate()
-        entry.stage(slug)
-        before = entry.digest(self.hub)
-        with patch.object(state, "append_ledger", side_effect=OSError("disk error")):
-            with self.assertRaises(OSError):
-                entry.apply(slug)
-        self.assertEqual(entry.digest(self.hub), before)
-
-    def test_record_cannot_mark_official_applied(self):
-        slug = self.candidate()
-        record = state.append_ledger(state.load_candidate_raw(slug), "official", "evidence")
-        self.assertFalse(record["applied"])
+    def test_acquire_repo_reuses_empty_placeholder_only(self):
+        repo = self.run / "repo"
+        repo.mkdir(parents=True)
+        saved = repo / "main.py"
+        saved.write_text("old = 1\n")
+        self.assertNotEqual(saved.stat().st_size, 0)
+        url = "https://github.com/example/New"
+        with patch.object(acquire_repo, "load_dotenv"), \
+             patch.object(sys, "argv", ["acquire_repo.py", url]), \
+             patch.object(acquire_repo, "_github") as github:
+            self.assertEqual(acquire_repo.main(), 2)
+            github.assert_not_called()
+            saved.unlink()
+            github.side_effect = lambda repo_url, dest: (
+                (dest / "main.py").write_text("new = 1\n"),
+                {"channel": "github", "commit": "a" * 40, "files": 1},
+            )[1]
+            self.assertEqual(acquire_repo.main(), 0)
+            self.assertEqual((repo / "main.py").read_text(), "new = 1\n")
 
     def test_run_result_depends_on_actual_apply(self):
-        slug = self.candidate()
-        run = self.root / "runs/test"
-        with patch.dict(os.environ, {"AGENT_RUN_ID": "test", "AGENT_RUN_DIR": str(run), "AGENT_SLUG": "seed", "INGEST_MAX_NEW": "1"}):
-            entry.stage(slug)
-            self.assertEqual(json.loads((run / "task_result.json").read_text())["status"], "needs_human")
-            entry.apply(slug)
-            result = json.loads((run / "task_result.json").read_text())
-            self.assertEqual(result["status"], "done")
-            self.assertTrue((run / "report.md").exists())
-
-    def test_symlink_candidate_escape_rejected(self):
-        outside = self.root / "outside"
-        outside.mkdir()
-        (self.work / "candidates").mkdir()
-        (self.work / "candidates/escape").symlink_to(outside)
-        with self.assertRaises(state.IngestError):
-            state.update_candidate("escape", {"paper_title": "x", "paper_url": "y"})
+        self.materials()
+        entry.stage(self.payload())
+        self.assertEqual(json.loads((self.run / "task_result.json").read_text())["status"], "needs_human")
+        entry.apply()
+        result = json.loads((self.run / "task_result.json").read_text())
+        self.assertEqual(result["status"], "done")
+        self.assertTrue((self.run / "report.md").exists())
 
 
 if __name__ == "__main__":

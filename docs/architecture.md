@@ -154,7 +154,7 @@ pi 默认给模型四个工具（read/write/edit/bash）+ 我们的扩展。全�
 |---|---|
 | `bash` | **命令白名单**：仅允许 `uv run python task/<当前task>/scripts/<已声明脚本>.py <args>` 形态 + `ls`/`cat`/`git log`/`git status`/`git diff` 等只读命令；其余拒绝 |
 | `write` / `edit` | **默认拒绝**——"LLM 不直接写盘"硬约束：一切产物写入只能经 task 脚本（脚本内部有自己的路径白名单） |
-| `read` | 路径白名单内可读：`task/`、`runs/`、`.ingest/`、`AGENTS.md`、`single-cell-hub/`（只读语义） |
+| `read` | 路径白名单内可读：`task/`、`runs/`、`AGENTS.md`、`single-cell-hub/`（只读语义） |
 | `ask_user(question, options)` | 仅交互模式加载 `ask-user.ts` 并注册；非交互不暴露 |
 | slash `/skill:<name>` | pi 原生技能入口，SKILL.md 即任务说明书 |
 
@@ -230,8 +230,10 @@ ingest 侧），纯读方（optimize）按它读取、读错即报，不需要�
     退化为薄壳（参数解析、exit code、runs/ 落盘、网络限流与缓存）
   - 网络类脚本内建限流与缓存（各通道额度见「检索接口抽象」）
   - stdout 预算：超长输出截断（摘要 ≤4k chars），全文落 `runs/` 供 read 追查
-- **工作区**：`runs/<ts>/<task>/<slug>/`（state.json 断点续跑 + 产物目录）；
-  任务自定义工作区（如 ingest 候选区 `.ingest/candidates/<slug>/`）必须 gitignore
+- **工作区**：`runs/<ts>/<task>/<slug>/`（`AGENT_RUN_DIR`，产物与逐篇结果）。
+  **任务无状态**：跨 run 不保存业务状态——没有 candidate/ledger 类持久工作区，
+  去重等业务判断一律以 hub 本身为准（ingest 见「去重主键」）。HTTP 缓存
+  `runs/.cache/ingest/` 纯内容寻址、无业务语义，跨 run 复用安全
 
 ## hub 契约（格式事实源）
 
@@ -460,6 +462,16 @@ CodeAvailability ∧ README互认 或 README互认 ∧ 作者匹配 → official
 单项强 → likely（强制 ask_user / pending，不得静默入库）
 ```
 
+**去重主键：仓库地址（2026-09-29 决策）**：入库去重以**归一化仓库地址
+`owner/repo`**（小写）为主键——目标物是仓库，仓库地址变了即视为另一篇论文，
+不用 DOI/标题模糊匹配。GitHub 改名后旧地址会重定向：probe 经 gh api
+`meta.full_name` 取 **canonical 全名**为键，并输出 `renamed_from` 标注；
+预印本与正式版共享同一仓库 → 自然合并。`model_name` 撞已入库条目 →
+needs_human（唯一身份类人工闸，绝不自动合并）。接口：`hub_query
+--repo <url|owner/repo>`（是否已入库）/ `--model <name>`（撞名检查）/
+`--list --json`（紧凑名单）。归一化实现在 hubkit/readers.py（纯文本，零网络），
+CLI 薄壳 task/ingest/scripts/hub_query.py。
+
 **特殊通道内嵌验证**（历史教训固化进脚本）：HF URL → HF model card 验证；
 `.py==0 && .gitmodules 存在` → `shell_repo` 列子模块要求人工确认（AIDO.Cell 教训）；
 README 指向 PyPI 而 GitHub 空壳 → sdist 兜底、license 以包内 LICENSE 为准
@@ -509,9 +521,9 @@ Unpaywall → `pdf_needs_manual`；落地校验 %PDF magic + ≥50KB。
 
 目标：**discover**——给定种子（论文 URL / arXiv ID / DOI / 标题）或在边界内自主
 发现单细胞论文，检索定位论文与官方仓库，产出符合 hub 契约的完整入库产物；
-**audit**——复核检索记录表与 hub 的一致性（空列、论文↔仓库对应、失效条目）。
-两条流程在 stage/apply 汇合，校验全绿后给出**人工 git 步骤清单**。agent 不执行
-git 提交。
+**audit**——复核 hub 异常条目。两条流程在 stage/apply 汇合，校验全绿后给出
+**人工 git 步骤清单**。agent 不执行 git 提交。**任务无状态**：无 candidate/ledger，
+条目材料与产物都在 run 目录下，身份与去重判断以 hub 为准。
 
 ### skill.yaml（12 个 agent 入口）
 
@@ -521,91 +533,85 @@ description: 论文检索入库（discover 发现 / audit 复核），按 single
 required_env: [INGEST_MODE]            # discover | audit
 optional_env:
   - INGEST_SEED_URL                    # 种子：doi:/arxiv:/URL/标题；audit 下为指定单点复核
-  - INGEST_MAX_NEW                     # discover：单 run 新候选数量上限
+  - INGEST_MAX_NEW                     # discover：单 run 新条目数量上限
   - INGEST_YEAR_FROM / INGEST_YEAR_TO  # discover：年份窗口（如 2024 / 2025）
-  - INGEST_MODEL_NAME / INGEST_VENUE / INGEST_YEAR / INGEST_COMMIT
+  - INGEST_MODEL_NAME / INGEST_VENUE / INGEST_YEAR
 scripts:
+  hub_query:          {args: {repo: str?, model: str?, list: bool?}}   # 仓库主键去重 + model_name 撞名检查
   scholar_lookup:     {args: {seed: str, limit: int?}}
   search_arxiv:       {args: {query: str, limit: int?}}
   web_search:         {args: {query: str, limit: int?}}
-  github_search:      {args: {query: str, probe: bool?}}
+  github_search:      {args: {query: str, probe: bool?, title: str?, arxiv_id: str?, authors: str?, code_availability: str?}}
   fetch_page:         {args: {url: str, want: str?}}   # want: code_availability | metadata | full
-  download_pdf:       {args: {slug: str, paper_url: str}}
-  extract_repo_links: {args: {slug: str}}              # PDF 全文挖仓库链接（两模式共用核心）
-  acquire_repo:       {args: {slug: str, repo_url: str, commit: str?}}
-  stage_entry:       {args: {slug: str}}
-  apply_entry:        {args: {slug: str, confirm: bool}}
-  candidate:         {args: {action: str, slug: str}}   # set / record，具体参数见脚本 --help
-  audit_scan:         {args: {key: str?}}              # 无 key 全量扫描；有 key 指定复核
+  download_pdf:       {args: {paper_url: str, arxiv_id: str?, doi: str?, s2_pdf: str?, citation_pdf_url: str?}}
+  extract_repo_links: {args: {}}                       # PDF 全文挖仓库链接（确定性 none 证据）
+  acquire_repo:       {args: {repo_url: str}}
+  stage_entry:        {args: {payload: str}}           # 条目字段 JSON；材料取 run 目录 paper/ repo/
+  apply_entry:        {args: {confirm: bool?}}
+  audit_scan:         {args: {model: str?}}            # 只读 hub 契约扫描
 ```
 
 ### 两模式流程（SKILL.md 编排）
 
 ```text
-discover 入口                          audit 入口
-① resolve   解析种子或在边界内自主     ⓪ audit_scan  检索记录表 × hub 交叉扫描：
-            发现（数量 INGEST_MAX_NEW、             异常清单 = 哈希不匹配 /
-            年份窗口护栏），定位论文                 unavailable / 空列条目
-            与仓库链接                           ① 对异常条目按 discover ②③ 重查；
-② evidence  download_pdf + extract_repo_links        INGEST_SEED_URL 指定时单点复核；
-            必要时 fetch_page 补充证据               正常条目仅确定性校验，不跑 LLM
-③ verify    github_search --probe → 判定；          ②③ 同 discover
-            确定后 acquire_repo（三通道）
-④⑤ 共享：
-④ stage     stage_entry：按 hubkit 契约生成完整待写文件并校验；失败回修最多 2 轮
-⑤ apply     apply_entry（校验全绿 + confirm 前置）落位并自行登记成功结论；
-            产出验收单 report.md：产物清单 + 证据链 + 人工 git 步骤
+discover 入口（六步，逐篇）              audit 入口
+① dedup     hub_query --repo 查重；      ⓪ audit_scan [model] 只读扫描 hub 契约异常
+            staged 前 --model 撞名检查  ① 对异常条目按 discover ②③ 重查；
+            （撞名 → needs_human）              INGEST_MODEL_NAME 指定时单点复核；
+② resolve   scholar_lookup 解析种子/自主         正常条目仅确定性校验，不跑 LLM
+            发现（数量、年份窗口护栏），      ②③ 同 discover
+            定位论文与条目字段
+③ acquire   download_pdf + extract_repo_links
+            + github_search --probe（官方性，含 renamed_from 检测）
+            + acquire_repo（三通道）
+④ stage     stage_entry --payload：按 hubkit 契约渲染完整待写文件并校验
+⑤ validate  按校验报告回修，至多 2 轮
+⑥ apply     apply_entry --confirm（校验全绿 + 授权前置）落位；
+            产出验收单 report.md：产物清单 + 人工 git 步骤
 ```
 
-### 检索记录表（ledger）
+### 去重与身份（取代台账）
 
-`.ingest/ledger.jsonl`（gitignore，append-only，内部 `_state.append_ledger` 写入，正式应用记录仅由 `apply_entry` 产生）。
-hub 契约管"结果正确"，本表管"过程不重复、不遗漏"——hub 侧零契约变更：
-
-- **主键**：`doi:<doi>`；无 DOI 用 `title:<norm>`（标题小写去标点的 sha256 前 12 位）
-- **verdict**：`official / author_maintained / likely / none / unavailable`
-  - `none`（**终态**，永不再查）：仅两种确定性证据可判——`extract_repo_links`
-    全文无仓库链接（evidence 记"全文无仓库链接"）；或 repo 快照 0 个 .py 且
-    probe 通过。**LLM 不得判定 none**
-  - `unavailable`（**瞬态**，下次重查）：执行错误 / 证据冲突 / 哈希不匹配
-- **固化**：`paper_hash = sha256(key + title + verdict + repo_url + commit)[:12]`。
-  已固化（hash 匹配且 applied）的条目不再重复检索；audit 重算哈希不匹配 →
-  自动降级 `unavailable` 重查
-- 记录字段：key / title / verdict / repo_url / commit / paper_hash / evidence
-  （关键原文引用）/ applied / checked_at
+无 ledger：过程状态不落盘，**hub 本身就是唯一事实源**。去重主键 =
+归一化仓库地址 `owner/repo`（Part II「去重主键」节）：地址变了即另一篇论文；
+预印本↔正式版共享仓库自然合并；`model_name` 撞名 → needs_human。
+确定性 none 证据（全文无仓库链接）由 `extract_repo_links` 产出，仅约束当次
+流程，不持久登记——同仓库再次出现时 hub_query 命中即止。
 
 ### 工作区
 
 ```text
-.ingest/candidates/<slug>/       # gitignore
-├── candidate.json               # 种子 + 解析结果 + 证据链 + 官方性判定（含 needs_review 原因）
-├── paper/  repo/  cache/        # PDF、剥 .git 快照、页面缓存、全文缓存
+runs/<ts>/ingest/<slug>/         # AGENT_RUN_DIR，launcher 创建
+├── paper/                       # 下载的 PDF（落地校验 %PDF + ≥50KB）
+├── repo/                        # 剥 .git 的源码快照
+├── cache/                       # 全文抽取缓存
 ├── staged/                      # 完整待写文件 + summary.json（含校验结果）
-└── report.md
-.ingest/ledger.jsonl             # 检索记录表（gitignore，见上节）
+├── ingest.json                  # 逐条目结果（脚本按真实结果写入）
+├── task_result.json             # 任务结果协议（applied 达标才 done）
+└── report.md                    # 验收单
+runs/.cache/ingest/              # HTTP 缓存（纯内容寻址，跨 run 复用）
 ```
 
 ### 脚本职责要点
 
-- `candidate.py set <slug> --payload '<json>'`：创建/合并候选资料。
-- `candidate.py record <slug> --verdict ... --evidence ...`：登记未入库结论，不能宣称 applied。
-- scholar_lookup/search_arxiv/web_search/github_search/fetch_page/download_pdf/extract_repo_links/acquire_repo：保留现有检索、取证、判定和采集能力。
-- `stage_entry.py <slug>`：一次渲染完整待写文件，构建临时 hub 视图并调用统一校验器。
-- `apply_entry.py <slug> --confirm`：确认候选、材料、hub 基线及 staged 均未改变；校验并应用同一份内容，失败恢复索引和条目；成功后登记台账。
-- `audit_scan.py`：复用 hubkit 读取/校验，仅保留台账对账。
+- `hub_query.py`：仓库主键去重查询（--repo / --model / --list），逻辑在 hubkit/readers.py。
+- scholar_lookup/search_arxiv/web_search/github_search/fetch_page/download_pdf/extract_repo_links/acquire_repo：检索、取证、判定和采集；证据上下文经 CLI 参数传入（无状态），PDF 落 `paper/`，快照落 `repo/`。
+- `stage_entry.py --payload '<json>'`：校验条目字段（九个必需字段；仅 official/author_maintained 可入库），一次渲染完整待写文件，构建临时 hub 视图并调用统一校验器，产物落 `staged/`。
+- `apply_entry.py --confirm`：确认 hub 基线、材料及 staged 均未改变；校验并应用同一份内容，失败恢复索引和条目。
+- `audit_scan.py`：复用 hubkit 读取/校验的只读扫描。
 - `validate_hub.py`：维护用校验入口，不列入 agent 的 ingest 脚本白名单。
-- 内部模块 `_state.py`（候选/台账/结果）、`_net.py`（网络/解析）、`_entry.py`（暂存/落位/回滚）不提供 CLI、不进入白名单。
-- hubkit 只接收条目字段、现有索引和材料路径，不依赖 candidate/slug/ledger；不写正式 hub。
-- `.ingest/` 是跨运行持久工作区，agent 可读，修改仍须经过脚本。`runs/` 保存每轮结果。
-- 候选更新、暂存、登记和应用按真实结果更新 report；运行中同步输出现有 task_result 契约，只有实际应用达到目标才标记 done。
+- 内部模块 `_state.py`（run 工作区/结果落盘）、`_net.py`（网络/限流/缓存）、`_entry.py`（暂存/落位/回滚）不提供 CLI、不进入白名单。
+- hubkit 只接收条目字段、现有索引和材料路径，不依赖 run 目录布局；不写正式 hub。
+- 脚本按真实结果更新 run 内 ingest.json / task_result.json / report.md；只有实际应用达到 `INGEST_MAX_NEW` 才标记 done。
 
-暂存布局：`staged/README.md`、`staged/.gitignore`、`staged/single_cell_models/{README.md,models.csv,<Name>/README.md}` 和 `summary.json`。PDF/repo 引用候选材料，不额外保存长期副本。旧版 staged 必须重新生成。
+暂存布局：`staged/README.md`、`staged/.gitignore`、`staged/single_cell_models/{README.md,models.csv,<Name>/README.md}` 和 `summary.json`。PDF/repo 引用 run 目录材料，不额外保存长期副本。旧版 staged 必须重新生成。
 
 ### 人工决策点实例化
 
 | 决策点 | 交互模式（--interactive） | 非交互（默认） |
 |---|---|---|
-| 官方性 `likely` | ask_user 确认或否决 | pending：`official_needs_review`，候选冻结 |
+| `model_name` 撞已入库条目 | ask_user 定夺身份 | needs_human：pending，不得入库 |
+| 官方性 `likely` | ask_user 确认或否决 | pending：`official_needs_review` |
 | 多候选仓库 | ask_user 列选项 | pending：列出候选 + 各自证据 |
 | PDF 拿不到 | ask_user 给本地路径 | pending：`pdf_needs_manual` |
 | 壳仓库/子模块 | ask_user 确认子模块清单 | pending：`repo_needs_review` |
@@ -613,9 +619,9 @@ hub 契约管"结果正确"，本表管"过程不重复、不遗漏"——hub �
 | audit 异常条目复核 | ask_user 逐条确认处置 | 重查后仍异常 → pending |
 
 **完成标准**：stage_entry 全绿（或 needs_human 状态明确且产物完整）；
-report.md 完整（证据链表、产物清单、人工 git 步骤）；ledger 一致——每个触碰过的
-论文四态之一（finalized+applied / none / unavailable / pending）；hub 侧无半成品
-状态（staged 完整 / 已 apply / 明确 pending 三选一）。
+report.md 完整（产物清单、人工 git 步骤）；触碰过的每篇论文要么 applied、
+要么有明确 pending 原因；hub 侧无半成品状态（staged 完整 / 已 apply /
+明确 pending 三选一）。
 
 ## task/optimize（hub 纯读方，零网络）
 
@@ -798,8 +804,8 @@ agent/vendor/node-v22.23.2-linux-arm64/bin/node --experimental-strip-types --tes
 
 - `agent/prompts/system.md` 通过 launcher 的 `--append-system-prompt` 加入 pi 系统提示词，不覆盖 pi 自带工具规则。模型使用英文规划；非交互最终答复默认简体中文；交互答复根据最近一条真实用户请求的主要叙述语言调整。
 - 项目撰写的模型指令、工具描述和守卫反馈使用英文；`AGENTS.md` 维护全局规则，各任务的 `SKILL.md` 维护业务流程。外部论文和代码保持原文。
-- `budget-guard.ts` 在路径守卫之前计入每次工具请求，包括被拒绝的调用。完全相同的工具名和参数连续请求两次后，第三次被拒绝；它通过任务声明的只读状态入口附上可核实的阶段和缺项。总预算耗尽后禁止继续调用工具。
-- ingest 的状态由 `candidate.py status [slug] --json` 从候选、材料、暂存摘要和台账推导；不另存阶段字段。暂存与状态查询共用必填字段规则。
+- `budget-guard.ts` 在路径守卫之前计入每次工具请求，包括被拒绝的调用。完全相同的工具名和参数连续请求两次后，第三次被拒绝并提示改换动作；总预算耗尽后禁止继续调用工具。任务无状态，没有只读状态入口可查询。
+- ingest 的进度只体现在脚本输出与 run 目录产物（ingest.json / task_result.json / report.md）；去重与身份以 hub 为准（hub_query）。
 - launcher 使用独立定时器监控非交互会话墙钟，避免无日志输出时无法触发超时；预算耗尽后模型仍继续发起工具调用则终止运行。
 
 

@@ -17,10 +17,10 @@ import json
 import re
 import sys
 
-from _state import INGEST_ROOT, _stdio_json
-from _net import http_get, load_dotenv, extract_metadata, extract_availability, strip_html
+from _state import _stdio_json
+from _net import CACHE_ROOT, http_get, load_dotenv, extract_metadata, extract_availability, strip_html
 
-PAGES = INGEST_ROOT / "cache" / "pages"
+PAGES = CACHE_ROOT / "pages"
 def main() -> int:
     parser = argparse.ArgumentParser(description="fetch_page: 网页取证")
     parser.add_argument("url")
