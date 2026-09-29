@@ -359,6 +359,35 @@ def run_pi_json(cmd: list[str], env: dict[str, str], run_dir: Path,
                 timer.cancel()
 
 
+# ---- --config 运行方案：flags 合并 ----
+# 优先级：CLI 显式 > config flags > 内置默认。argparse 侧对应选项 default=None
+# 作哨兵；config 值的合法性在此统一校验（fail-closed）。
+
+_PROFILE_FLAGS: dict = {
+    "interactive": False, "output": "human", "tool_budget": 60,
+    "timeout": 1800, "thinking": "off",
+}
+
+
+def _apply_profile_flags(args: argparse.Namespace, flags: dict) -> None:
+    """校验并合并 config flags；CLI 已显式传入的选项不被覆盖。"""
+    for key, value in flags.items():
+        if key not in _PROFILE_FLAGS:
+            raise SystemExit(f"[config] 未知 flag: {key}"
+                             f"（允许: {', '.join(sorted(_PROFILE_FLAGS))}）")
+        if key == "output" and value not in sorted(RENDERERS):
+            raise SystemExit(f"[config] output 非法: {value!r}")
+        if key == "thinking" and value not in ("off", "minimal", "low", "medium", "high"):
+            raise SystemExit(f"[config] thinking 非法: {value!r}")
+        if key in ("tool_budget", "timeout") and (
+                isinstance(value, bool) or not isinstance(value, int)):
+            raise SystemExit(f"[config] {key} 必须为整数")
+        if getattr(args, key, None) is None:
+            setattr(args, key, value)
+    for key, default in _PROFILE_FLAGS.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, default)
+
 def cmd_run(args: argparse.Namespace) -> int:
     task = args.task
     if (not re.fullmatch(r"[A-Za-z0-9_-]+", task)
@@ -370,15 +399,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     overrides = parse_set(args.set)
     dotenv = envguard.load_env_file(REPO_ROOT / ".env")
 
-    interactive = args.interactive and sys.stdout.isatty()
-    if args.interactive and not sys.stdout.isatty():
-        print("[mode] stdout 非 TTY，--interactive 降级为非交互", file=sys.stderr)
-
     try:
         spec = assembly.load_skill(task)
+        profile_env, profile_flags = assembly.load_profile(
+            args.config, args.profile, spec)
     except PreflightError as exc:
         print(f"[preflight] {exc}", file=sys.stderr)
         return EXIT_FATAL
+    # 优先级：--set > --config 方案 > .env > 父进程（方案 env 合并进 overrides）
+    overrides = {**profile_env, **overrides}
+    _apply_profile_flags(args, profile_flags)
+
+    interactive = args.interactive and sys.stdout.isatty()
+    if args.interactive and not sys.stdout.isatty():
+        print("[mode] stdout 非 TTY，--interactive 降级为非交互", file=sys.stderr)
 
     slug = resolve_slug(task, overrides, dotenv)
     run_id = uuid.uuid4().hex
@@ -525,15 +559,23 @@ def main() -> None:
         help="注入环境变量（可多次）",
     )
     p_run.add_argument(
-        "--interactive", action="store_true",
+        "--config", default=None,
+        help="运行方案 YAML（相对项目根，参照 configs/ingest.profiles.example.yml）",
+    )
+    p_run.add_argument(
+        "--profile", default=None,
+        help="选择 --config 中的命名方案（profiles 键）",
+    )
+    p_run.add_argument(
+        "--interactive", action="store_true", default=None,
         help="交互模式（TUI；默认非交互，需要人工判断时记录 needs_human）",
     )
     p_run.add_argument(
-        "--output", choices=sorted(RENDERERS), default="human",
+        "--output", choices=sorted(RENDERERS), default=None,
         help="非交互输出样式: human=人类轨迹 / quiet=一行 JSON 摘要 / raw=事件透传",
     )
     p_run.add_argument(
-        "--tool-budget", type=int, default=60,
+        "--tool-budget", type=int, default=None,
         help="工具调用预算（budget-guard 机械护栏，超限强制收尾）",
     )
     p_run.add_argument(
@@ -541,12 +583,12 @@ def main() -> None:
         help="隐藏思考流输出（human 输出模式；思考仍完整记录在 session）",
     )
     p_run.add_argument(
-        "--thinking", default="off",
+        "--thinking", default=None,
         choices=["off", "minimal", "low", "medium", "high"],
         help="推理档位（透传 pi；off=无思考流；需要端点/模型支持）",
     )
     p_run.add_argument(
-        "--timeout", type=int, default=1800,
+        "--timeout", type=int, default=None,
         help="会话墙钟超时秒数（0 关闭；超时终止记 needs_human）",
     )
     p_run.set_defaults(func=cmd_run)

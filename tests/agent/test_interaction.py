@@ -23,7 +23,7 @@ class InteractionTests(unittest.TestCase):
                 spec = assembly.SkillSpec("hello", "", [], [], {"hello": {"args": {}}})
                 args = argparse.Namespace(task="hello", set=[], interactive=requested,
                                           output="quiet", tool_budget=60, timeout=1800,
-                                          thinking="off")
+                                          thinking="off", config=None, profile=None)
                 stdout = io.StringIO()
                 stdout.isatty = lambda: tty
                 with contextlib.ExitStack() as stack:

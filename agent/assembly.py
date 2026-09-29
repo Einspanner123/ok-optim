@@ -230,6 +230,65 @@ def render_guard() -> Path:
     return dst
 
 
+def load_profile(config_path: str | None, profile_name: str | None,
+                 spec: SkillSpec) -> tuple[dict[str, str], dict]:
+    """加载 --config 运行方案，返回 (env, flags)；未提供 --config 返回空。
+
+    结构：单方案 = 顶层 {env?, flags?}；多方案 = {defaults?, profiles: {name: {...}}}，
+    profile 覆盖 defaults 的同名键。fail-closed：env 键必须在 skill 白名单内、
+    未知顶层键拒绝——防拼写错误静默失效（如 INGEST_MODELNAME）。
+    """
+    if not config_path:
+        if profile_name:
+            raise PreflightError("--profile 需要同时提供 --config")
+        return {}, {}
+    path = Path(config_path)
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    if not path.is_file():
+        raise PreflightError(f"config 文件不存在: {path}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict) or not data:
+        raise PreflightError(f"config 格式错误（应为非空 mapping）: {path}")
+    if "profiles" in data:
+        profiles = data["profiles"]
+        if not isinstance(profiles, dict) or not profiles:
+            raise PreflightError("config 的 profiles 必须为非空 mapping")
+        if not profile_name:
+            raise PreflightError("config 含多个方案，需要 --profile 指定其一: "
+                                 + ", ".join(sorted(profiles)))
+        if profile_name not in profiles:
+            raise PreflightError(f"未知方案: {profile_name}（可用: "
+                                 + ", ".join(sorted(profiles)) + "）")
+        defaults, chosen = data.get("defaults") or {}, profiles[profile_name]
+    else:
+        if profile_name:
+            raise PreflightError("config 为单方案（无 profiles 键），不接受 --profile")
+        defaults, chosen = {}, data
+    for label, section in (("defaults", defaults), ("profile", chosen)):
+        if not isinstance(section, dict):
+            raise PreflightError(f"config {label} 必须为 mapping")
+        unknown = set(section) - {"env", "flags"}
+        if unknown:
+            raise PreflightError(f"config {label} 含未知键: {', '.join(sorted(unknown))}"
+                                 "（允许: env, flags）")
+    whitelist = set(spec.required_env) | set(spec.optional_env)
+    env: dict[str, str] = {}
+    for source in (defaults.get("env") or {}, chosen.get("env") or {}):
+        if not isinstance(source, dict):
+            raise PreflightError("config 的 env 必须为 mapping")
+        for key, value in source.items():
+            if key not in whitelist:
+                raise PreflightError(f"config env 键不在 skill 白名单内: {key}")
+            env[key] = str(value)
+    flags: dict = {}
+    for source in (defaults.get("flags") or {}, chosen.get("flags") or {}):
+        if not isinstance(source, dict):
+            raise PreflightError("config 的 flags 必须为 mapping")
+        flags.update(source)
+    return env, flags
+
+
 def make_run_dir(task: str, slug: str, ts: str) -> Path:
     for label, value in (("task", task), ("slug", slug), ("timestamp", ts)):
         if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}", value):

@@ -235,3 +235,53 @@ class IngestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- apply_entry CLI 机械闸 ----
+
+import contextlib  # noqa: E402
+
+import apply_entry  # noqa: E402
+
+
+class ApplyGateTests(unittest.TestCase):
+    """--confirm 与 INGEST_APPLY_AUTHORIZED=1 双条件，缺一即 needs_human。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        runs = root / "runs"
+        run_dir = runs / "t1" / "ingest" / "seed"
+        run_dir.mkdir(parents=True)
+        for key, value in {"HUB": root / "hub", "RUNS_ROOT": runs}.items():
+            p = patch.object(state, key, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = patch.dict(os.environ, {"AGENT_RUN_DIR": str(run_dir)}, clear=False)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _run(self, argv, env):
+        buf = io.StringIO()
+        with patch.object(sys, "argv", ["apply_entry.py", *argv]), \
+                patch.dict(os.environ, env, clear=False), \
+                contextlib.redirect_stderr(buf):
+            code = apply_entry.main()
+        return code, buf.getvalue()
+
+    def test_confirm_without_env_authorization_is_rejected(self):
+        code, err = self._run(["--confirm"], {"INGEST_APPLY_AUTHORIZED": ""})
+        self.assertEqual(code, 2)
+        self.assertIn("INGEST_APPLY_AUTHORIZED", err)
+
+    def test_env_without_confirm_is_rejected(self):
+        code, err = self._run([], {"INGEST_APPLY_AUTHORIZED": "1"})
+        self.assertEqual(code, 2)
+        self.assertIn("--confirm", err)
+
+    def test_authorized_confirm_reaches_apply(self):
+        # 双闸通过后进入 apply()：无 staged → 流程级 IngestError（而非闸拒绝）
+        code, err = self._run(["--confirm"], {"INGEST_APPLY_AUTHORIZED": "1"})
+        self.assertEqual(code, 2)
+        self.assertIn("缺少 stage_entry", err)

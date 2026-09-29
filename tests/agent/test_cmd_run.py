@@ -21,6 +21,7 @@ def _make_args(task: str = "hello", set_list: list[str] | None = None,
         ],
         interactive=False, output=output, tool_budget=60, timeout=timeout,
         no_thinking=False, thinking="off",
+        config=None, profile=None,
     )
 
 
@@ -71,6 +72,9 @@ def _stub_pi(tmp_path: Path, exit_code: int = 0) -> Path:
         "          'reason': 'stub run completed'}\n"
         "with open(session_dir + '/task_result.json', 'w') as f:\n"
         "    f.write(json.dumps(result))\n"
+        "with open(session_dir + '/stub-env.json', 'w') as f:\n"
+        "    f.write(json.dumps({k: os.environ.get(k, '')\n"
+        "                        for k in ('AGENT_TOOL_BUDGET', 'INGEST_MODE')}))\n"
         f"sys.exit({exit_code})\n",
         encoding="utf-8",
     )
@@ -103,6 +107,19 @@ class TestCmdRun:
         events = runs[0].parent / "events.jsonl"
         assert events.is_file() and "stub-1" in events.read_text(encoding="utf-8")
         assert "ok-llm" in (proj / "agent" / "runtime" / "models.json").read_text()
+
+    def test_config_flags_reach_run_env(self, proj: Path, tmp_path: Path, monkeypatch):
+        cfg = tmp_path / "prof.yml"
+        cfg.write_text("flags:\n  tool_budget: 77\n", encoding="utf-8")
+        monkeypatch.setattr(launcher, "find_pi",
+                            lambda: (sys.executable, _stub_pi(tmp_path, 0)))
+        args = _make_args()
+        args.tool_budget = None  # 模拟 CLI 未显式传入，允许 config 填充
+        args.config = str(cfg)
+        assert launcher.cmd_run(args) == 0
+        dumps = list((proj / "runs").rglob("stub-env.json"))
+        assert dumps
+        assert json.loads(dumps[0].read_text(encoding="utf-8"))["AGENT_TOOL_BUDGET"] == "77"
 
     def test_pi_exit_propagates_to_llm_error(self, proj: Path, tmp_path: Path,
                                              monkeypatch):

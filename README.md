@@ -16,6 +16,22 @@ cp .env.example .env                          # 填 LLM endpoint 三项
 uv run ok run --task hello                    # 冒烟验证
 ```
 
+## 运行方案（--config）
+
+重复使用的参数组合可固化为 YAML 方案，模板见
+[configs/ingest.profiles.example.yml](configs/ingest.profiles.example.yml)：
+
+```bash
+uv run ok run --task ingest --config configs/ingest.profiles.yml --profile discover
+```
+
+- 优先级：`--set` > 方案文件 > `.env` > 父进程环境
+- 文件支持 `defaults` + 命名 `profiles`；单方案文件可省 `profiles` 键直接用顶层
+- `env` 键限 skill.yaml 白名单内，未知键/未知顶层键拒绝启动（fail-closed）
+- flags（interactive/output/tool_budget/timeout/thinking）同样可固化
+- `INGEST_APPLY_AUTHORIZED=1` 可固化进方案（命名建议带 `-apply` 后缀），
+  写入端由 `apply_entry` 机械校验该值，缺省即 needs_human
+
 ## 设计文档
 
 [docs/architecture.md](docs/architecture.md) 是项目**唯一**设计文档，分四部分：

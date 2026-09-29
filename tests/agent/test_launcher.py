@@ -354,3 +354,115 @@ class TestRunPiJson:
                                     {"AGENT_TOOL_BUDGET": "60"},
                                     tmp_path / "run", r)
         assert code == 3
+
+
+# ---- --config 运行方案 ----
+
+from agent import assembly  # noqa: E402
+
+
+def _profile_spec():
+    return assembly.SkillSpec(
+        name="ingest", description="", required_env=["INGEST_MODE"],
+        optional_env=["INGEST_APPLY_AUTHORIZED", "INGEST_MAX_NEW"], scripts={})
+
+
+class TestLoadProfile:
+    def test_no_config_returns_empty(self):
+        assert assembly.load_profile(None, None, _profile_spec()) == ({}, {})
+
+    def test_profile_requires_config(self):
+        with pytest.raises(assembly.PreflightError, match="--profile 需要同时提供"):
+            assembly.load_profile(None, "x", _profile_spec())
+
+    def test_single_profile_toplevel(self, tmp_path):
+        f = tmp_path / "p.yml"
+        f.write_text("env:\n  INGEST_MODE: discover\nflags:\n  timeout: 3600\n",
+                     encoding="utf-8")
+        env, flags = assembly.load_profile(str(f), None, _profile_spec())
+        assert env == {"INGEST_MODE": "discover"}
+        assert flags == {"timeout": 3600}
+
+    def test_single_profile_rejects_profile_arg(self, tmp_path):
+        f = tmp_path / "p.yml"
+        f.write_text("env: {INGEST_MODE: audit}\n", encoding="utf-8")
+        with pytest.raises(assembly.PreflightError, match="单方案"):
+            assembly.load_profile(str(f), "x", _profile_spec())
+
+    def test_multi_profile_requires_selection(self, tmp_path):
+        f = tmp_path / "p.yml"
+        f.write_text("profiles:\n  a: {env: {INGEST_MODE: audit}}\n"
+                     "  b: {env: {INGEST_MODE: discover}}\n", encoding="utf-8")
+        with pytest.raises(assembly.PreflightError, match="--profile 指定"):
+            assembly.load_profile(str(f), None, _profile_spec())
+
+    def test_unknown_profile_rejected(self, tmp_path):
+        f = tmp_path / "p.yml"
+        f.write_text("profiles:\n  a: {env: {INGEST_MODE: audit}}\n", encoding="utf-8")
+        with pytest.raises(assembly.PreflightError, match="未知方案"):
+            assembly.load_profile(str(f), "zz", _profile_spec())
+
+    def test_unknown_top_key_rejected(self, tmp_path):
+        f = tmp_path / "p.yml"
+        f.write_text("profiles:\n  a: {env: {INGEST_MODE: audit}, flag: {}}\n",
+                     encoding="utf-8")
+        with pytest.raises(assembly.PreflightError, match="未知键"):
+            assembly.load_profile(str(f), "a", _profile_spec())
+
+    def test_env_key_outside_whitelist_rejected(self, tmp_path):
+        f = tmp_path / "p.yml"
+        f.write_text("env: {INGEST_MODELNAME: x}\n", encoding="utf-8")
+        with pytest.raises(assembly.PreflightError, match="白名单"):
+            assembly.load_profile(str(f), None, _profile_spec())
+
+    def test_defaults_merged_profile_wins(self, tmp_path):
+        f = tmp_path / "p.yml"
+        f.write_text(
+            "defaults:\n  env: {INGEST_MODE: discover, INGEST_MAX_NEW: \"1\"}\n"
+            "  flags: {tool_budget: 30}\n"
+            "profiles:\n  p:\n    env: {INGEST_MODE: audit}\n"
+            "    flags: {timeout: 99}\n", encoding="utf-8")
+        env, flags = assembly.load_profile(str(f), "p", _profile_spec())
+        assert env == {"INGEST_MODE": "audit", "INGEST_MAX_NEW": "1"}
+        assert flags == {"tool_budget": 30, "timeout": 99}
+
+    def test_values_stringified(self, tmp_path):
+        f = tmp_path / "p.yml"
+        f.write_text("env: {INGEST_MAX_NEW: 5}\n", encoding="utf-8")
+        env, _ = assembly.load_profile(str(f), None, _profile_spec())
+        assert env["INGEST_MAX_NEW"] == "5"
+
+
+class TestApplyProfileFlags:
+    def _args(self, **kw):
+        base = dict(interactive=None, output=None, tool_budget=None,
+                    timeout=None, thinking=None, no_thinking=False)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_config_fills_unset(self):
+        args = self._args()
+        launcher._apply_profile_flags(args, {"output": "quiet", "timeout": 99})
+        assert args.output == "quiet" and args.timeout == 99
+
+    def test_cli_explicit_wins(self):
+        args = self._args(output="human")
+        launcher._apply_profile_flags(args, {"output": "quiet"})
+        assert args.output == "human"
+
+    def test_builtin_default_fills_rest(self):
+        args = self._args()
+        launcher._apply_profile_flags(args, {})
+        assert (args.tool_budget, args.thinking, args.interactive) == (60, "off", False)
+
+    def test_unknown_flag_rejected(self):
+        with pytest.raises(SystemExit, match="未知 flag"):
+            launcher._apply_profile_flags(self._args(), {"flag": 1})
+
+    def test_invalid_output_rejected(self):
+        with pytest.raises(SystemExit, match="output 非法"):
+            launcher._apply_profile_flags(self._args(), {"output": "json"})
+
+    def test_budget_must_be_int(self):
+        with pytest.raises(SystemExit, match="tool_budget"):
+            launcher._apply_profile_flags(self._args(), {"tool_budget": "60"})

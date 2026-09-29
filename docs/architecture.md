@@ -93,7 +93,7 @@ task/<name>/
 ```bash
 uv sync && uv run ok setup    # 全新 clone：两步完成环境准备
 uv run ok setup               # 安装/修复 pi runtime（幂等）
-uv run ok run --task <t> [--set K=V ...] [--interactive]   # 单次任务（run 可省略；默认非交互）
+uv run ok run --task <t> [--set K=V ...] [--config F [--profile P]] [--interactive]   # 单次任务（run 可省略；默认非交互）
 uv run ok status              # 历史运行记录（journal 汇总）
 uv run ok batch ...           # 批量（M4）
 uv run ok pending             # 待人工项（M4）
@@ -203,6 +203,7 @@ ingest 侧），纯读方（optimize）按它读取、读错即报，不需要�
   - `uv run ok run --task ingest --set INGEST_SEED_URL=arxiv:xxxx`（默认非交互）
   - `uv run ok run --task optimize --set OPTIMIZE_MODEL_NAME=UCE`
   - `--set K=V` 进 env 快照；launcher 组装首条任务指令（任务名 + 参数说明 + 指向 SKILL.md）注入 pi
+  - `--config <yml> [--profile <name>]` 运行方案：YAML 固化 env+flags（模板 configs/ingest.profiles.example.yml），优先级 --set > 方案 > .env；env 键限 skill 白名单、未知键拒绝；INGEST_APPLY_AUTHORIZED=1 由 apply_entry 机械校验
 - **运行中升级（ask_user）**：agent 无法从 env 得知的裁决点——官方性存疑确认、
   多候选仓库二选一、PDF/repo 人工兜底、apply 前确认
 - **无人值守降级**：默认非交互或 batch 模式不加载提问扩展、不暴露提问工具；启动指令直接说明无人应答，
