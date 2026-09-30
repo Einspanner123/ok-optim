@@ -2,7 +2,9 @@
 
 仅 task/ingest/scripts/ 内部使用。契约（architecture.md「检索接口抽象」）：
 - 各通道限流（S2 1req/s、arXiv ≥3s、gh api 滑动窗口 30req/min、网页 1req/2s/域名）
-- 响应按查询键磁盘缓存（runs/.cache/ingest/，纯内容寻址），重复查询零网络
+- 响应按查询键磁盘缓存（runs/.cache/ingest/，纯内容寻址）：缓存对调用方透明——
+  命中与未命中的响应内容一致（不做伪造标记），只影响网络耗时
+- 易变数据源（VOLATILE_HOSTS）不落盘，保证 probe/证据始终新鲜
 - httpx + Mozilla UA；代理经 envguard 注入（ALL_PROXY / HTTPS_PROXY）
 """
 
@@ -23,6 +25,22 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 
 # 纯内容寻址缓存：无业务语义，跨 run 复用安全
 CACHE_ROOT = REPO_ROOT / "runs" / ".cache" / "ingest"
+
+# 易变数据源：不落盘缓存，保证每次读取都是新鲜证据（仓库改名/删除、
+# README 更新、模型仓库改动都必须立刻可见）。论文元数据源（arXiv/S2/
+# unpaywall）天然不可变，仍走缓存。
+VOLATILE_HOSTS = (
+    "api.github.com", "github.com", "raw.githubusercontent.com",
+    "huggingface.co", "hf-mirror.com",
+)
+
+
+def _cacheable(url: str) -> bool:
+    """该 URL 是否允许磁盘缓存（易变主机一律豁免）。"""
+    host = url.split("/")[2] if "://" in url else url
+    host = host.split(":")[0].lower()
+    return not any(host == h or host.endswith("." + h) for h in VOLATILE_HOSTS)
+
 
 # 每域名最小请求间隔（秒）；未列出的域名走默认
 DOMAIN_INTERVALS = {
@@ -89,17 +107,22 @@ def _get(url: str, params: dict | None, headers: dict | None,
 
 def http_get(url: str, params: dict | None = None, headers: dict | None = None,
              timeout: float = 30.0, cache: bool = True) -> httpx.Response:
-    """限流 GET + 磁盘缓存。二进制安全（bytes 可经 resp.content 取）。"""
+    """限流 GET + 磁盘缓存。二进制安全（bytes 可经 resp.content 取）。
+
+    缓存对调用方透明：命中与未命中的可见内容一致，不注入任何标记头；
+    易变主机（VOLATILE_HOSTS）与 cache=False 的调用一律直连。
+    """
     ck = cache_key(url, params, headers)
-    if cache and ck.is_file():
+    if cache and _cacheable(url) and ck.is_file():
         return httpx.Response(200, content=ck.read_bytes(),
-                              headers={"X-Cache": "hit"},
                               request=httpx.Request("GET", url))
     _throttle(url)
     resp = _get(url, params, headers, timeout)
-    if cache and resp.status_code == 200:
+    if cache and _cacheable(url) and resp.status_code == 200:
         CACHE_ROOT.mkdir(parents=True, exist_ok=True)
-        ck.write_bytes(resp.content)
+        tmp = ck.with_suffix(".tmp")   # 原子替换：杜绝并发读到半截文件
+        tmp.write_bytes(resp.content)
+        tmp.replace(ck)
     return resp
 
 

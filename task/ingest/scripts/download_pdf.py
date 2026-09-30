@@ -79,7 +79,7 @@ def try_chain(cand: dict) -> tuple[bytes, str] | None:
     paper_url = cand.get("paper_url")
     if paper_url and not cand.get("citation_pdf_url"):
         try:
-            resp = http_get(paper_url)
+            resp = http_get(paper_url, cache=False)  # 落地页 HTML 易变：不缓存
             meta = extract_metadata(resp.text)
             cpdf = meta.get("pdf_url")
             if cpdf:

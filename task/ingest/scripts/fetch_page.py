@@ -31,7 +31,7 @@ def main() -> int:
     load_dotenv()
 
     try:
-        resp = http_get(args.url)
+        resp = http_get(args.url, cache=False)  # 任意网页内容易变：不缓存
         resp.raise_for_status()
     except Exception as exc:
         print(f"fatal: fetch 失败: {exc}", file=sys.stderr)

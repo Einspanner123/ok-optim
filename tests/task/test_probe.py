@@ -12,8 +12,11 @@ fixtures 设计注意：中性 owner（sctools）不得与作者姓（doe）撞�
 
 import json
 import sys
+import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
+import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "task/ingest/scripts"))
@@ -200,3 +203,73 @@ class TestMain:
         assert gs.main() == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["verdict"] == "official"
+
+
+# ---- HTTP 缓存透明性与易变端点豁免 ----
+
+import _net  # noqa: E402
+
+
+@pytest.fixture()
+def cache_root(tmp_path):
+    """隔离的缓存根，避免污染 runs/.cache。"""
+    with patch.object(_net, "CACHE_ROOT", tmp_path / "cache"):
+        yield tmp_path / "cache"
+
+
+def _fake_response():
+    return httpx.Response(200, content=b'{"ok": 1}',
+                          request=httpx.Request("GET", "https://x/y"))
+
+
+@pytest.mark.parametrize("url", [
+    "https://api.github.com/repos/a/b",
+    "https://raw.githubusercontent.com/a/b/main/README.md",
+    "https://huggingface.co/a/b",
+])
+def test_volatile_hosts_not_cacheable(url):
+    assert not _net._cacheable(url)
+
+
+@pytest.mark.parametrize("url", [
+    "https://api.semanticscholar.org/graph/v1/paper/x",
+    "https://export.arxiv.org/api/query",
+    "https://api.unpaywall.org/v2/10.1/x",
+])
+def test_stable_hosts_cacheable(url):
+    assert _net._cacheable(url)
+
+
+def test_volatile_endpoint_not_written_to_disk(cache_root):
+    with patch.object(_net, "_throttle"), \
+            patch.object(_net, "_get", return_value=_fake_response()):
+        _net.http_get("https://api.github.com/repos/a/b")
+    assert not cache_root.exists()
+
+
+def test_stable_endpoint_written_atomically(cache_root):
+    with patch.object(_net, "_throttle"), \
+            patch.object(_net, "_get", return_value=_fake_response()):
+        _net.http_get("https://api.semanticscholar.org/graph/v1/paper/x")
+    assert len(list(cache_root.glob("*.cache"))) == 1
+    assert list(cache_root.glob("*.tmp")) == []
+
+
+def test_cache_hit_is_indistinguishable(cache_root):
+    """缓存透明：第二次零网络、内容一致、无伪造标记头。"""
+    with patch.object(_net, "_throttle"), \
+            patch.object(_net, "_get", return_value=_fake_response()) as get:
+        first = _net.http_get("https://api.semanticscholar.org/graph/v1/paper/x")
+        second = _net.http_get("https://api.semanticscholar.org/graph/v1/paper/x")
+    assert get.call_count == 1
+    assert first.content == second.content
+    assert "X-Cache" not in second.headers
+
+
+def test_cache_false_bypasses_cache(cache_root):
+    with patch.object(_net, "_throttle"), \
+            patch.object(_net, "_get", return_value=_fake_response()) as get:
+        _net.http_get("https://api.semanticscholar.org/graph/v1/paper/x",
+                      cache=False)
+    assert get.call_count == 1
+    assert not cache_root.exists()
