@@ -26,6 +26,7 @@
 | 2026-09-23 | 补充已实现的权限边界、任务结果协议与退出码、重复调用反馈、增量入库 | §7 §8 |
 | 2026-09-29 | 去重主键改为归一化仓库地址；入库改为无台账（候选工作区 → run 目录） | §11 §13.1 |
 | 2026-09-30 | **重构为大厂规范设计文档结构**；补全守卫层实现细节、`read_dirs` 契约、测试与 CI 门禁；可读路径声明从公共常量下沉到 `skill.yaml`；修正 bash 命令规划器的选项与 `find` 语法缺陷；未实现项统一加 TBD 标注 | 全文，重点 §7 §15 §17 |
+| 2026-09-30 | **复核并更正 §16.2 / §17.1**：原"`.ingest/` 提示词不一致（优先级高）"为**误判**——67 次调用全部早于无状态改造 `b1ee6a2`，在当时 `.ingest/` 是合法工作区；改造后唯一真实 run 的 `.ingest` 计数为 0。同时给 §16.2 补上**数据时间戳与适用范围**，并新增 §17.3 记录"新守卫无真实 run 证据" | §16.2 §17.1 §17.3 |
 
 ---
 
@@ -1351,15 +1352,21 @@ PATH=$NB:$PATH uvx pyright --pythonpath .venv/bin/python agent hubkit task
 
 ### 16.2 已观测到的真实失败分布
 
-来自 8 个 `runs/*/events.jsonl`、199 次 bash 调用：
+> **⚠️ 数据出处与适用范围（引用前必读）**
+> 下表来自 8 个 `runs/*/events.jsonl`、**199 次 bash 调用**（4 个真实 ingest run 共 193 次 +
+> 4 个 `--task hello` 冒烟 6 次），**全部产生于 2026-09-28 10:52 — 2026-09-30 06:51（UTC）**。
+> 而守卫重构 `9d101a5` 提交于 **2026-09-30 08:52:57（UTC）**。
+> 因此**这些观测描述的是旧守卫（字符集白名单 + 公共常量 `READ_DIRS`）的行为**；
+> **新守卫的真实 run 调用数为 0**（见 §17.3）。
+> 引用时不要把旧守卫的观测当作现役行为。
 
 | 现象 | 量级 | 本质 |
 |---|---|---|
 | `uv run python task/ingest/scripts/*.py` 业务失败 | 多为 arXiv 406 / S2 429 / PDF 403 / 超时 | **脚本业务失败**，不是守卫误伤 |
-| `cat .ingest/...` 被守卫拒绝 | `.ingest` 出现在 **67 次**调用中 | **提示词/契约不一致**（见 §17.1） |
+| 旧守卫拒绝含 `;`、`\|`、`$`、`-R` 的命令 | 多个 run 反复出现（如 `ls -R`、`for ... do`、`cmd \| sort`） | **旧守卫过严**（§7.3 已按"边界是路径而非选项"重构） |
 | `scholar_lookup` 撞 S2 限流 | 单 run 内 9 次，交错重试 | 护栏漏抓（已由 §8.1 第二信号覆盖） |
 | 一次 run 被预算杀掉 | 63 次工具调用后 `Tool budget exhausted (maximum 60 requests)` | 收尾缺失（已由 §8.2 兜底） |
-| 命令拼接攻击 | **0 次** | 说明"字符集白名单"防的是事故而非对抗 |
+| 命令拼接攻击 | **0 次** | 说明安全机制防的是事故而非对抗 |
 
 ### 16.3 明确记录的两类"看起来像 bug 其实不是"
 
@@ -1370,14 +1377,38 @@ PATH=$NB:$PATH uvx pyright --pythonpath .venv/bin/python agent hubkit task
 
 ## 17. 开放问题与已知缺口
 
-### 17.1 `.ingest/` 与 `AGENT_RUN_DIR` 的提示词不一致（优先级高）
+### 17.1 ~~`.ingest/` 与 `AGENT_RUN_DIR` 的提示词不一致~~ —— **已复核为误判，本条作废**
 
-- **事实**：真实 runs 里有 **67 次调用**在读写 `.ingest/`（`cat .ingest/candidates/...`、
-  `ls -la .ingest/candidates/...`）；而 `.ingest/` 既被 `.gitignore` 忽略、也不在任何 task 的
-  `read_dirs` 里，`task/ingest/SKILL.md` 规定产物应写在 `AGENT_RUN_DIR`（`runs/<ts>/...`）。
-- **定性**：这是**提示词引导错误**，不是路径白名单缺陷。
-- **修法**：修 `SKILL.md`（及 `SKILL_CN.md`）的产物路径表述。**优先级高于继续放宽白名单**。
-- **状态**：未修。
+**结论：2026-09-30 复核认定此条不成立，真实情况是"无状态改造早已修好，我误把历史数据当成现役缺陷"。**
+
+| 项 | 内容 |
+|---|---|
+| 原（错误）论断 | 真实 runs 中 67 次调用读写 `.ingest/`，说明提示词引导模型写到错误工作区；需修 `SKILL.md`；优先级高 |
+| 复核结论 | **误判**。67 次调用**全部来自 2026-09-28 的 3 个 run**，当时 `.ingest/` 是合法工作区 |
+| 真正的修复者 | 无状态改造 **`b1ee6a2`**（*feat: stateless ingest — AGENT_RUN_DIR workdir + repo-key dedup*），**2026-09-29 08:58:45 UTC** |
+| 修复后证据 | 改造后**唯一**一次真实 ingest run（`20260929-115005`，11:50 UTC，**61 次 bash**）：`.ingest` 出现 **0 次** |
+| 现存残留 | 仅 `.gitignore` 末行仍留 `.ingest/`（无状态改造后未清理的陈旧条目，无害） |
+
+**判定依据链：**
+
+1. **时间戳错位**：8 个事件文件的时间跨度是 `2026-09-28T10:52:31Z` → `2026-09-30T06:51:19Z`；
+   67 次 `.ingest` 调用分布在 2026-09-28 的 3 个 run（10:52 有 20 次、11:22 有 13 次、11:55 有 34 次）。
+2. **`b1ee6a2` 的 diff 直接否定了"未修"的说法**：
+   - `-const READ_DIRS = ["task", "runs", "single-cell-hub", "docs", ".ingest"];` → 删掉 `.ingest`
+   - `-INGEST_ROOT = REPO_ROOT / ".ingest"` → `+run_dir = os.environ.get("AGENT_RUN_DIR")`
+   - commit message：*"drop cross-run candidate/ledger state (.ingest); … materials live under the injected run dir"*
+   - 同步改写了 `task/ingest/SKILL.md`、`task/ingest/SKILL_CN.md` 与本文档
+   —— 也就是说，"修 `SKILL.md` 产物路径表述"这件事**在 2026-09-29 就已经做完了**。
+3. **改造前那些命令不是误伤，而是正确**：`.ingest/` 当时在 `READ_DIRS` 内、`INGEST_ROOT` 指向它。
+   实测回放显示它们**成功返回真实内容**——`ls -la .ingest/candidates/` 有真实 listing，
+   `cat .ingest/candidates/genemamba/candidate.json` 返回真实 JSON。
+4. **当时真正被拒的是别的东西**：同批调用里失败的是 `ls -R`（`unsupported option: -R`）、
+   `cmd | sort` / `for ... do` / `$d`（`shell operators, expansion and control characters are disabled`）
+   ——即**旧守卫过严**，与工作区路径无关。这才是 §7.3 重构要解决的问题。
+
+**教训（写进文档，避免复发）**：`runs/` 里的观测数据**自带时间戳**，是"某版本代码的行为快照"，
+不是"当前代码的行为"。任何"从 runs 统计出缺陷"的推断，**必须先与产生该 run 的 commit 对齐**，
+否则会把**历史正确行为**误判成**现役缺陷**——本轮就是这个错误，且它一路通过了我自己的审计和 CI。
 
 ### 17.2 其他已知缺口
 
@@ -1389,6 +1420,20 @@ PATH=$NB:$PATH uvx pyright --pythonpath .venv/bin/python agent hubkit task
 | Q4 | `validate_hub.py --hub` 对存量 20 模型报 5 处缺陷 | M1 验收口径需澄清"全绿"含义 | Geneformer PDF 缺失、GenePT/AIDO.Cell 无 `.py`、SCimilarity orphan |
 | Q5 | §7.1 声明的"模型代码 OS 级隔离"方案未定 | 阻塞 M3 的 `validate_npu` 之外的能力 | 见 T13.2-3 |
 | Q6 | 未启用的 `for` 循环类命令 | 唯一 1 次 `for` 调用被字符集白名单拒绝 | 当前设计视为正确行为（无 shell） |
+| Q7 | **新守卫（`9d101a5`）无任何真实 run 证据** | 见 §17.3 | 建议交付前补基线 run |
+
+### 17.3 新守卫（`9d101a5`）尚无任何真实 run 证据
+
+- **事实**：`runs/` 下共 8 个事件文件，最后写入时间为 **2026-09-30 06:51 UTC**；守卫重构提交于
+  **2026-09-30 08:52:57 UTC**。按 commit 时间切分，**post-refactor 的 bash 调用数为 0**
+  （pre-refactor 为 199）。
+- **含义**：§7.3 的"边界是路径而非选项"、`read_dirs` 下沉到 `skill.yaml`、`grep`/`find` 语法修复，
+  目前只有**单元与执行级测试**背书（`test_policy.mjs` + `test_command_exec.mjs`，共 60 用例，
+  全绿），**没有端到端证据**。§16.2 的分布表也全部属于旧守卫。
+- **风险**：`test_command_exec.mjs` 是在**受控 fixture** 上真跑命令，能证明"命令能跑通"，
+  但不能证明"真实 ingest 会话在新守卫下顺利"。首跑仍可能出现未被单测覆盖的选项/路径组合。
+- **建议**：至少补两次基线 run 并把时间戳写回本节——① `uv run ok run --task hello`；
+  ② 一次完整 `uv run ok run --task ingest --set ...`。后者才是新守卫的真实验收。
 
 ---
 
