@@ -50,7 +50,8 @@ class TestEnsureNode:
         import hashlib
 
         digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
-        monkeypatch.setitem(bootstrap.NODE_SHA256, "arm64", digest)
+        # 不能写死 "arm64"：CI 跑在 x86_64 上，_arch() 返回 "x64"。
+        monkeypatch.setitem(bootstrap.NODE_SHA256, bootstrap._arch(), digest)
         monkeypatch.setattr(
             bootstrap.urllib.request, "urlretrieve", lambda url, dest: shutil_copy(tarball, dest)
         )
