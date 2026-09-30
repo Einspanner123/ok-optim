@@ -10,8 +10,9 @@ from pathlib import Path
 from agent import journal
 
 
-def _write_events(run_dir: Path, *, stop_reason: str = "stop",
-                  usage: dict | None = None, error: str | None = None):
+def _write_events(
+    run_dir: Path, *, stop_reason: str = "stop", usage: dict | None = None, error: str | None = None
+):
     """非交互模式：launcher 从 events.jsonl 取证据（message_end 事件）。"""
     run_dir.mkdir(parents=True, exist_ok=True)
     message = {
@@ -22,14 +23,15 @@ def _write_events(run_dir: Path, *, stop_reason: str = "stop",
     if error:
         message["errorMessage"] = error
     (run_dir / "events.jsonl").write_text(
-        json.dumps({"type": "session", "id": "abc-123"}) + "\n" +
-        json.dumps({"type": "message_end", "message": message}) + "\n",
+        json.dumps({"type": "session", "id": "abc-123"})
+        + "\n"
+        + json.dumps({"type": "message_end", "message": message})
+        + "\n",
         encoding="utf-8",
     )
 
 
-def _write_session(run_dir: Path, *, stop_reason: str = "stop",
-                   usage: dict | None = None):
+def _write_session(run_dir: Path, *, stop_reason: str = "stop", usage: dict | None = None):
     """交互模式：session 文件直接存消息记录。"""
     run_dir.mkdir(parents=True, exist_ok=True)
     message = {
@@ -40,8 +42,7 @@ def _write_session(run_dir: Path, *, stop_reason: str = "stop",
         "content": [],
     }
     (run_dir / "session.jsonl").write_text(
-        json.dumps({"type": "session", "id": "abc-123"}) + "\n" +
-        json.dumps(message) + "\n",
+        json.dumps({"type": "session", "id": "abc-123"}) + "\n" + json.dumps(message) + "\n",
         encoding="utf-8",
     )
 
@@ -66,8 +67,7 @@ class TestFinalizeBranches:
         assert s.exit_code == 3
 
     def test_usage_accumulated(self, tmp_path: Path):
-        _write_events(tmp_path, usage={"input": 100, "output": 50,
-                                       "totalTokens": 150})
+        _write_events(tmp_path, usage={"input": 100, "output": 50, "totalTokens": 150})
         s = journal.finalize(tmp_path, "t", "s", 0, interactive=False)
         assert s.usage.input == 100
         assert s.usage.output == 50
@@ -95,8 +95,7 @@ class TestFinalizeBranches:
 
 class TestPrintSummary:
     def test_prints_status_and_usage(self, tmp_path: Path, capsys):
-        _write_events(tmp_path, usage={"input": 10, "output": 5,
-                                     "totalTokens": 15})
+        _write_events(tmp_path, usage={"input": 10, "output": 5, "totalTokens": 15})
         s = journal.finalize(tmp_path, "t", "s", 0, interactive=False)
         journal.print_summary(s, tmp_path)
         out = capsys.readouterr().out

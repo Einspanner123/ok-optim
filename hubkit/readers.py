@@ -17,7 +17,9 @@ TABLE_ROW_RE = re.compile(r"^\| \*\*(.+?)\*\* \|")
 
 GITHUB_URL_RE = re.compile(
     r"^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)"
-    r"(?:\.git)?(?:/.*)?$", re.I)
+    r"(?:\.git)?(?:/.*)?$",
+    re.IGNORECASE,
+)
 BARE_REPO_RE = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")
 
 
@@ -43,8 +45,7 @@ def repo_key(repo_url: str) -> str:
 
 
 def _compact(row: dict) -> dict:
-    return {key: row[key] for key in ("model_name", "paper_title", "year",
-                                      "venue", "repo_url")}
+    return {key: row[key] for key in ("model_name", "paper_title", "year", "venue", "repo_url")}
 
 
 def _rows(hub: Path) -> list[dict]:
@@ -104,7 +105,7 @@ def load_models_csv(hub: Path) -> tuple[list[dict], str | None]:
                 # 保留行号信息，交由校验器报告
                 rows.append({"__line__": i, "__fields__": fields})
                 continue
-            rows.append(dict(zip(CSV_COLUMNS, fields)))
+            rows.append(dict(zip(CSV_COLUMNS, fields, strict=False)))
     return rows, None
 
 

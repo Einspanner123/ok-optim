@@ -12,10 +12,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "task/ingest/scripts"))
 
-from hubkit import readers  # noqa: E402
-import hub_query  # noqa: E402
-from hubkit.schema import CSV_COLUMNS, MODELS_CSV  # noqa: E402
-from _fixtures import row  # noqa: E402
+import hub_query
+from _fixtures import row
+
+from hubkit import readers
+from hubkit.schema import CSV_COLUMNS, MODELS_CSV
 
 
 def _hub(tmp_path: Path, *items):
@@ -23,6 +24,7 @@ def _hub(tmp_path: Path, *items):
     csv_path = hub / MODELS_CSV
     csv_path.parent.mkdir(parents=True)
     import csv
+
     with csv_path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS, lineterminator="\n")
         writer.writeheader()
@@ -32,22 +34,24 @@ def _hub(tmp_path: Path, *items):
 
 
 class TestRepoKey:
-    @pytest.mark.parametrize("url,expected", [
-        ("https://github.com/Example/Repo", "example/repo"),
-        ("http://github.com/example/repo/", "example/repo"),
-        ("https://www.github.com/example/repo", "example/repo"),
-        ("github.com/example/repo", "example/repo"),
-        ("https://github.com/example/repo.git", "example/repo"),
-        ("https://github.com/example/repo/tree/main", "example/repo"),
-        ("example/repo", "example/repo"),
-        ("EXAMPLE/REPO", "example/repo"),
-    ])
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            ("https://github.com/Example/Repo", "example/repo"),
+            ("http://github.com/example/repo/", "example/repo"),
+            ("https://www.github.com/example/repo", "example/repo"),
+            ("github.com/example/repo", "example/repo"),
+            ("https://github.com/example/repo.git", "example/repo"),
+            ("https://github.com/example/repo/tree/main", "example/repo"),
+            ("example/repo", "example/repo"),
+            ("EXAMPLE/REPO", "example/repo"),
+        ],
+    )
     def test_github_forms_normalize(self, url, expected):
         assert readers.repo_key(url) == expected
 
     def test_non_github_keeps_lowercased_url(self):
-        assert readers.repo_key("https://HuggingFace.co/x/y") == \
-            "https://huggingface.co/x/y"
+        assert readers.repo_key("https://HuggingFace.co/x/y") == "https://huggingface.co/x/y"
 
     def test_empty_rejected(self):
         with pytest.raises(ValueError):
@@ -61,8 +65,7 @@ class TestRepoKey:
 class TestFinders:
     def test_find_by_repo_matches_normalized(self, tmp_path):
         hub = _hub(tmp_path, row())
-        assert readers.find_by_repo(hub, "https://github.com/example/Seed.git") \
-            is not None
+        assert readers.find_by_repo(hub, "https://github.com/example/Seed.git") is not None
         assert readers.find_by_repo(hub, "https://github.com/example/Other") is None
 
     def test_find_by_model_case_insensitive(self, tmp_path):
@@ -75,8 +78,7 @@ class TestFinders:
         hub = _hub(tmp_path, row("Seed"), row("Zeta"))
         entries = readers.list_entries(hub)
         assert [e["model_name"] for e in entries] == ["Seed", "Zeta"]
-        assert set(entries[0]) == {"model_name", "paper_title", "year",
-                                   "venue", "repo_url"}
+        assert set(entries[0]) == {"model_name", "paper_title", "year", "venue", "repo_url"}
 
     def test_header_mismatch_raises(self, tmp_path):
         hub = tmp_path / "hub"
@@ -95,9 +97,12 @@ class TestCli:
         hub = _hub(tmp_path, row())
         assert self._run(["--repo", "https://github.com/example/Seed/", "--json"], hub) == 0
         payload = json.loads(capsys.readouterr().out)
-        assert payload == {"hub": str(hub), "query": {"repo": "example/seed"},
-                           "found": True,
-                           "match": readers._compact(row())}
+        assert payload == {
+            "hub": str(hub),
+            "query": {"repo": "example/seed"},
+            "found": True,
+            "match": readers._compact(row()),
+        }
         assert self._run(["--repo", "example/ghost", "--json"], hub) == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["found"] is False and payload["match"] is None

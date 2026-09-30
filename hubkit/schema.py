@@ -11,8 +11,16 @@ import re
 # ---- models.csv 表格接口 ----
 
 CSV_COLUMNS = [
-    "model_name", "paper_title", "year", "venue", "paper_url",
-    "repo_url", "github_stars", "framework", "license", "commit_hash",
+    "model_name",
+    "paper_title",
+    "year",
+    "venue",
+    "paper_url",
+    "repo_url",
+    "github_stars",
+    "framework",
+    "license",
+    "commit_hash",
 ]
 KEY_COLUMNS = ["model_name", "repo_url", "commit_hash"]
 YEAR_RE = re.compile(r"(19|20)\d{2}")
@@ -28,8 +36,20 @@ PDF_MIN_BYTES = 50 * 1024
 # 代码相关扩展（<2MB 被忽略规则命中即需例外块）
 # .txt: requirements.txt 等运行所需；.csv: GenePT 事故——input_data/gene_info_table.csv 被吞
 CODE_EXTS = {
-    ".py", ".pyi", ".r", ".sh", ".yaml", ".yml", ".toml", ".json",
-    ".pkl", ".ipynb", ".cfg", ".ini", ".txt", ".csv",
+    ".py",
+    ".pyi",
+    ".r",
+    ".sh",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".json",
+    ".pkl",
+    ".ipynb",
+    ".cfg",
+    ".ini",
+    ".txt",
+    ".csv",
 }
 CODE_SIZE_LIMIT = 2 * 1024 * 1024
 
@@ -40,7 +60,7 @@ REPO_KIND_OFFICIAL = "Official"
 REPO_KIND_AUTHOR = "Author-maintained"
 STATUS_PDF_MARK = "PDF downloaded"
 # repo 内无 .py 时 Status 必须说明原因（命中任一即视为已说明）
-STATUS_NO_CODE_RE = re.compile(r"no (runnable )?code|no python|0 \.py|incomplete", re.I)
+STATUS_NO_CODE_RE = re.compile(r"no (runnable )?code|no python|0 \.py|incomplete", re.IGNORECASE)
 
 # ---- 双 README 徽章体系 ----
 

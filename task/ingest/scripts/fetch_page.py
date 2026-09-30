@@ -13,19 +13,25 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
-import re
 import sys
 
+from _net import (
+    CACHE_ROOT,
+    extract_availability,
+    extract_metadata,
+    http_get,
+    load_dotenv,
+    strip_html,
+)
 from _state import _stdio_json
-from _net import CACHE_ROOT, http_get, load_dotenv, extract_metadata, extract_availability, strip_html
 
 PAGES = CACHE_ROOT / "pages"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="fetch_page: 网页取证")
     parser.add_argument("url")
-    parser.add_argument("--want", choices=["code_availability", "metadata", "full"],
-                        default="full")
+    parser.add_argument("--want", choices=["code_availability", "metadata", "full"], default="full")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     load_dotenv()

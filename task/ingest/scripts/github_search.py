@@ -18,12 +18,11 @@ exit: 0 成功（verdict 是结论性输出）。
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 
+from _net import gh_api, load_dotenv
 from _state import _stdio_json
-from _net import gh_api, gh_raw, load_dotenv
 
 
 def parse_repo(repo_url: str) -> str:
@@ -39,10 +38,16 @@ def parse_repo(repo_url: str) -> str:
 def search_repos(query: str, limit: int) -> list[dict]:
     resp = gh_api("/search/repositories", params={"q": query, "per_page": limit})
     resp.raise_for_status()
-    return [{"full_name": it["full_name"], "url": it["html_url"],
-             "stars": it["stargazers_count"], "fork": it["fork"],
-             "description": (it.get("description") or "")[:200]}
-            for it in resp.json().get("items", [])]
+    return [
+        {
+            "full_name": it["full_name"],
+            "url": it["html_url"],
+            "stars": it["stargazers_count"],
+            "fork": it["fork"],
+            "description": (it.get("description") or "")[:200],
+        }
+        for it in resp.json().get("items", [])
+    ]
 
 
 def _norm(text: str) -> list[str]:
@@ -70,8 +75,7 @@ def probe(full_name: str, context: dict | None = None) -> dict:
 
     meta = gh_api(f"/repos/{full_name}")
     if meta.status_code == 404:
-        return {"verdict": "unverified", "repo": full_name,
-                "evidence": {"error": "repo 404"}}
+        return {"verdict": "unverified", "repo": full_name, "evidence": {"error": "repo 404"}}
     meta.raise_for_status()
     meta = meta.json()
     owner = meta.get("owner") or {}
@@ -82,8 +86,7 @@ def probe(full_name: str, context: dict | None = None) -> dict:
     renamed_from = full_name if canonical.lower() != full_name.lower() else ""
 
     readme = ""
-    r = gh_api(f"/repos/{full_name}/readme",
-               headers={"Accept": "application/vnd.github.raw"})
+    r = gh_api(f"/repos/{full_name}/readme", headers={"Accept": "application/vnd.github.raw"})
     if r.status_code == 200:
         readme = r.text.lower()
     readme_tokens = " ".join(_norm(readme))
@@ -120,8 +123,12 @@ def probe(full_name: str, context: dict | None = None) -> dict:
         verdict = "likely"
     else:
         verdict = "unverified"
-    result = {"verdict": verdict, "repo": canonical,
-              "repo_url": meta.get("html_url"), "evidence": evidence}
+    result = {
+        "verdict": verdict,
+        "repo": canonical,
+        "repo_url": meta.get("html_url"),
+        "evidence": evidence,
+    }
     if renamed_from:
         result["renamed_from"] = renamed_from
     return result
@@ -134,8 +141,11 @@ def main() -> int:
     parser.add_argument("--title", default=None, help="论文标题（probe 证据）")
     parser.add_argument("--arxiv-id", default=None, help="arXiv id（probe 证据）")
     parser.add_argument("--authors", default=None, help="作者，逗号分隔（probe 证据）")
-    parser.add_argument("--code-availability", default=None,
-                        help="论文的 Code Availability 声明/URL（probe 证据；非空即视为有声明）")
+    parser.add_argument(
+        "--code-availability",
+        default=None,
+        help="论文的 Code Availability 声明/URL（probe 证据；非空即视为有声明）",
+    )
     parser.add_argument("--limit", type=int, default=8)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -155,7 +165,7 @@ def main() -> int:
                 print("needs_human: 单项强证据 → likely，不得静默入库", file=sys.stderr)
         else:
             result = {"status": "ok", "results": search_repos(args.query, args.limit)}
-    except SystemExit as exc:
+    except SystemExit:
         raise
     except Exception as exc:
         print(f"fatal: gh api 失败: {exc}", file=sys.stderr)

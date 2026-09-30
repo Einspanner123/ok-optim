@@ -16,26 +16,32 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-from _state import _stdio_json
 from _net import http_get, load_dotenv
+from _state import _stdio_json
 
 ATOM = "https://export.arxiv.org/api/query"
 NS = {"a": "http://www.w3.org/2005/Atom"}
 
 
-def search(query: str, limit: int, year_from: str | None,
-           year_to: str | None) -> list[dict]:
-    resp = http_get(ATOM, params={
-        "search_query": query, "start": 0, "max_results": min(limit * 2, 100),
-        "sortBy": "submittedDate", "sortOrder": "descending",
-    }, headers={
-        # arXiv API 对 httpx 默认的 accept-encoding: zstd 返回 406（已知问题），
-        # 显式声明 Accept 并收窄编码集
-        "Accept": "application/atom+xml",
-        "Accept-Encoding": "gzip, deflate",
-    })
+def search(query: str, limit: int, year_from: str | None, year_to: str | None) -> list[dict]:
+    resp = http_get(
+        ATOM,
+        params={
+            "search_query": query,
+            "start": 0,
+            "max_results": min(limit * 2, 100),
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+        },
+        headers={
+            # arXiv API 对 httpx 默认的 accept-encoding: zstd 返回 406（已知问题），
+            # 显式声明 Accept 并收窄编码集
+            "Accept": "application/atom+xml",
+            "Accept-Encoding": "gzip, deflate",
+        },
+    )
     resp.raise_for_status()
-    root = ET.fromstring(resp.text)
+    root = ET.fromstring(resp.text)  # noqa: S314 - arXiv Atom API 为可信源
     out: list[dict] = []
     for entry in root.findall("a:entry", NS):
         published = entry.findtext("a:published", "", NS) or ""
@@ -47,15 +53,16 @@ def search(query: str, limit: int, year_from: str | None,
         raw_id = entry.findtext("a:id", "", NS) or ""
         arxiv_id = re.sub(r"^https?://arxiv\.org/abs/", "", raw_id)
         arxiv_id = re.sub(r"v\d+$", "", arxiv_id)
-        out.append({
-            "arxiv_id": arxiv_id,
-            "title": " ".join((entry.findtext("a:title", "", NS) or "").split()),
-            "published": published[:10],
-            "authors": [a.findtext("a:name", "", NS)
-                        for a in entry.findall("a:author", NS)],
-            "summary": " ".join((entry.findtext("a:summary", "", NS) or "").split())[:600],
-            "paper_url": f"https://arxiv.org/abs/{arxiv_id}",
-        })
+        out.append(
+            {
+                "arxiv_id": arxiv_id,
+                "title": " ".join((entry.findtext("a:title", "", NS) or "").split()),
+                "published": published[:10],
+                "authors": [a.findtext("a:name", "", NS) for a in entry.findall("a:author", NS)],
+                "summary": " ".join((entry.findtext("a:summary", "", NS) or "").split())[:600],
+                "paper_url": f"https://arxiv.org/abs/{arxiv_id}",
+            }
+        )
         if len(out) >= limit:
             break
     return out
@@ -63,21 +70,26 @@ def search(query: str, limit: int, year_from: str | None,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="search_arxiv: arXiv 检索")
-    parser.add_argument("query", help="arXiv 检索式，如 'all:single-cell foundation model' 或 cat:q-bio.GN AND all:scRNA-seq")
+    parser.add_argument(
+        "query",
+        help="arXiv 检索式，如 'all:single-cell foundation model' 或 cat:q-bio.GN AND all:scRNA-seq",
+    )
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     load_dotenv()
 
     try:
-        papers = search(args.query, args.limit,
-                        os.environ.get("INGEST_YEAR_FROM"),
-                        os.environ.get("INGEST_YEAR_TO"))
+        papers = search(
+            args.query,
+            args.limit,
+            os.environ.get("INGEST_YEAR_FROM"),
+            os.environ.get("INGEST_YEAR_TO"),
+        )
     except Exception as exc:
         print(f"fatal: arXiv 查询失败: {exc}", file=sys.stderr)
         return 3
-    _stdio_json({"status": "ok", "count": len(papers), "papers": papers},
-                args.json)
+    _stdio_json({"status": "ok", "count": len(papers), "papers": papers}, args.json)
     return 0
 
 

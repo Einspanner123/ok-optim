@@ -34,3 +34,50 @@ pythonVersion = "3.10"
 typeCheckingMode = "basic"
 # 有意为之：代理/外部依赖的动态用法不强行收窄
 reportMissingModuleSource = "none"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["agent/vendor", "single-cell-hub", "runs", ".venv"]
+
+[tool.ruff.lint]
+# 目标规则集：在 ruff 默认（E4/E7/E9/F）之上，补齐我们真正关心的几类。
+# 每一条都是「能对应到真实缺陷」的，不引入纯风格争议规则。
+select = [
+    "E", "W",   # pycodestyle：含 E402 顶层导入顺序
+    "F",        # pyflakes：未定义名 / 未使用导入与变量
+    "I",        # isort：导入排序
+    "B",        # bugbear：含 B023 闭包误用循环变量
+    "C4",       # comprehensions
+    "SIM",      # simplify
+    "RUF",      # ruff 自有规则（含 RUF100 死 noqa）
+    "S",        # bandit：安全类（含 S110/S112 静默吞异常）
+    "FURB",     # refurb
+    "TRY",      # tryceratops：异常使用规范
+    "DTZ",      # 时区相关
+    "EXE",      # shebang / 可执行位
+]
+ignore = [
+    "E501",     # 行宽交给 formatter，不打断 lint
+    # 本项目通篇中文注释与文档字符串；RUF001-003 会把 CJK 字符判成
+    # "ambiguous unicode"，属于纯误报，关闭。
+    "RUF001", "RUF002", "RUF003",
+    # 要求把 raise ValueError("x") 改成自定义异常类。属风格偏好，
+    # 且会与现有 ValueError 契约冲突（journal/render 靠 ValueError 判类型）。
+    "TRY003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试文件豁免「生产代码才需要遵守」的规则：
+#   S101  assert 是测试的标准断言写法
+#   S108  构造 /tmp 路径正是为了验证越界防护
+#   E702  紧凑写多个 self.evidence(); self.result() 是测试夹具惯例
+#   RUF012 测试夹具里的类属性即共享变量，不需要 ClassVar
+#   RUF043 pytest.raises(match=...) 有意用正则片段，非字面量
+#   B023  subTest 循环内同步定义的闭包，不存在延迟绑定
+#   B905  夹具构造等长序列，strict 无意义
+#   SIM117 测试里嵌套 with 便于逐层标注
+"tests/**" = ["S101", "S108", "E702", "RUF012", "RUF043", "B023", "B905", "SIM117"]
+# 任务脚本是独立 CLI 入口，带 shebang 但通过 `python <script>` 调用，
+# 不需要可执行位；EXE001 在此为噪音。
+"task/**" = ["EXE001", "S101"]

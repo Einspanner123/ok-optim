@@ -3,6 +3,7 @@
 Stateless: the entry payload comes from the caller (CLI --payload), materials
 live under the run workdir (paper/, repo/), and staged files under staged/.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -13,9 +14,17 @@ from pathlib import Path
 
 import _state as state
 from _state import IngestError
-from hubkit import readers, render, validators, ignore_rules
-from hubkit.schema import (CSV_COLUMNS, INDEX_FILES, COMMIT_HASH_PLACEHOLDER, COMMIT_RE,
-                          ENTRIES_ROOT, entry_name, entry_path)
+
+from hubkit import ignore_rules, readers, render, validators
+from hubkit.schema import (
+    COMMIT_HASH_PLACEHOLDER,
+    COMMIT_RE,
+    CSV_COLUMNS,
+    ENTRIES_ROOT,
+    INDEX_FILES,
+    entry_name,
+    entry_path,
+)
 
 
 def digest(path: Path) -> str | None:
@@ -51,7 +60,9 @@ def load_entry(payload: dict) -> tuple[dict, dict]:
         raise IngestError("仅 official / author_maintained 可暂存和入库")
     entry = {**payload}
     entry.setdefault("commit_hash", COMMIT_HASH_PLACEHOLDER)
-    if not (COMMIT_RE.fullmatch(entry["commit_hash"]) or entry["commit_hash"] == COMMIT_HASH_PLACEHOLDER):
+    if not (
+        COMMIT_RE.fullmatch(entry["commit_hash"]) or entry["commit_hash"] == COMMIT_HASH_PLACEHOLDER
+    ):
         raise IngestError("非法 commit_hash")
     row = {key: str(entry.get(key, "") or "") for key in CSV_COLUMNS}
     return entry, row
@@ -77,7 +88,9 @@ def material_paths(name: str) -> tuple[Path, Path]:
 
 
 def baseline(hub: Path, name: str) -> dict:
-    return {rel: digest(state.contained(hub, hub / rel)) for rel in (*INDEX_FILES, entry_path(name))}
+    return {
+        rel: digest(state.contained(hub, hub / rel)) for rel in (*INDEX_FILES, entry_path(name))
+    }
 
 
 def materialize(hub: Path, staged: Path, summary: dict, tmp: Path) -> None:
@@ -112,25 +125,44 @@ def stage(payload: dict) -> dict:
     rows, error = readers.load_models_csv(hub)
     if error:
         raise IngestError(error)
-    indexes = {rel: (hub / rel).read_text(encoding="utf-8") if (hub / rel).exists() else ""
-               for rel in INDEX_FILES}
+    indexes = {
+        rel: (hub / rel).read_text(encoding="utf-8") if (hub / rel).exists() else ""
+        for rel in INDEX_FILES
+    }
     commit = row["commit_hash"]
-    status = ("no runnable code (.py) in repository snapshot" if not any(repo.rglob("*.py"))
-              else "repository snapshot acquired from official source (commit unavailable)"
-              if commit == COMMIT_HASH_PLACEHOLDER
-              else f"repository cloned from official source at commit {commit}")
+    status = (
+        "no runnable code (.py) in repository snapshot"
+        if not any(repo.rglob("*.py"))
+        else "repository snapshot acquired from official source (commit unavailable)"
+        if commit == COMMIT_HASH_PLACEHOLDER
+        else f"repository cloned from official source at commit {commit}"
+    )
     base = baseline(hub, row["model_name"])
-    files = render.entry_files(row, entry["verdict"], status, rows, indexes,
-                               ignore_rules.snapshot_exception(hub, row["model_name"], repo))
+    files = render.entry_files(
+        row,
+        entry["verdict"],
+        status,
+        rows,
+        indexes,
+        ignore_rules.snapshot_exception(hub, row["model_name"], repo),
+    )
     with tempfile.TemporaryDirectory(prefix="ingest-stage-") as folder:
         prepared = Path(folder)
         for rel, content in files.items():
             target = prepared / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-        summary = {"version": 2, "model_name": row["model_name"], "baseline": base,
-                   "pdf": str(pdf), "pdf_hash": digest(pdf), "repo": str(repo), "repo_hash": digest(repo),
-                   "files": {rel: digest(prepared / rel) for rel in files}, "checked_at": state.now_iso()}
+        summary = {
+            "version": 2,
+            "model_name": row["model_name"],
+            "baseline": base,
+            "pdf": str(pdf),
+            "pdf_hash": digest(pdf),
+            "repo": str(repo),
+            "repo_hash": digest(repo),
+            "files": {rel: digest(prepared / rel) for rel in files},
+            "checked_at": state.now_iso(),
+        }
         with tempfile.TemporaryDirectory(prefix="ingest-check-") as tmp:
             materialize(hub, prepared, summary, Path(tmp))
             summary["validation"] = check(Path(tmp), only=row["model_name"])
@@ -142,6 +174,12 @@ def stage(payload: dict) -> dict:
     result = {"model_name": row["model_name"], "staged": str(staged), **summary["validation"]}
     state.progress(row["model_name"], "staged" if result["ok"] else "validation_failed", result)
     return result
+
+
+def _ensure_validation_ok(validation: dict) -> None:
+    """应用后校验：失败即抛，触发 apply() 的整轮回滚。"""
+    if not validation["ok"]:
+        raise IngestError("应用后校验失败: " + json.dumps(validation, ensure_ascii=False))
 
 
 def apply() -> dict:
@@ -157,9 +195,13 @@ def apply() -> dict:
         raise IngestError("旧版或不完整的 staged，请重新 stage")
     entry_name(name)
     pdf, repo = material_paths(name)
-    if (summary["baseline"] != baseline(hub, name)
-            or summary["pdf"] != str(pdf) or summary["repo"] != str(repo)
-            or summary["pdf_hash"] != digest(pdf) or summary["repo_hash"] != digest(repo)):
+    if (
+        summary["baseline"] != baseline(hub, name)
+        or summary["pdf"] != str(pdf)
+        or summary["repo"] != str(repo)
+        or summary["pdf_hash"] != digest(pdf)
+        or summary["repo_hash"] != digest(repo)
+    ):
         raise IngestError("材料或 hub 已变化，请重新 stage")
     expected = {*INDEX_FILES, f"{entry_path(name)}/README.md"}
     if set(summary["files"]) != expected:
@@ -197,9 +239,7 @@ def apply() -> dict:
                     shutil.copytree(source, target)
                 else:
                     shutil.copyfile(source, target)
-            validation = check(hub, only=name)
-            if not validation["ok"]:
-                raise IngestError("应用后校验失败: " + json.dumps(validation, ensure_ascii=False))
+            _ensure_validation_ok(check(hub, only=name))
         except Exception:
             for rel in affected:
                 target = hub / rel
@@ -215,8 +255,15 @@ def apply() -> dict:
                     else:
                         shutil.copyfile(source, target)
             raise
-    result = {"model_name": name, "applied": True, **validation,
-              "git_steps": [f"cd {hub}", f"git add {entry_path(name)} " + " ".join(INDEX_FILES),
-                            f'git commit -m "Update {name} entry"']}
+    result = {
+        "model_name": name,
+        "applied": True,
+        **validation,
+        "git_steps": [
+            f"cd {hub}",
+            f"git add {entry_path(name)} " + " ".join(INDEX_FILES),
+            f'git commit -m "Update {name} entry"',
+        ],
+    }
     state.progress(name, "applied", result)
     return result

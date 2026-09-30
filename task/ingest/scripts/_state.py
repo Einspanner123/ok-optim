@@ -6,6 +6,7 @@
 - HTTP 缓存 runs/.cache/ingest/ 纯内容寻址，无业务语义，跨 run 复用安全
 - 本模块无 CLI，不直接写 single-cell-hub
 """
+
 from __future__ import annotations
 
 import json
@@ -17,8 +18,17 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 HUB = REPO_ROOT / "single-cell-hub"
 RUNS_ROOT = REPO_ROOT / "runs"
 
-ENTRY_FIELDS = ("model_name", "paper_title", "paper_url", "year",
-                "venue", "repo_url", "framework", "license", "verdict")
+ENTRY_FIELDS = (
+    "model_name",
+    "paper_title",
+    "paper_url",
+    "year",
+    "venue",
+    "repo_url",
+    "framework",
+    "license",
+    "verdict",
+)
 
 
 class IngestError(Exception):
@@ -68,24 +78,40 @@ def progress(name: str, status: str, detail: dict) -> None:
         return
     run = contained(RUNS_ROOT, Path(run_path))
     path = run / "ingest.json"
-    state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"run_id": run_id, "items": {}}
+    state = (
+        json.loads(path.read_text(encoding="utf-8"))
+        if path.exists()
+        else {"run_id": run_id, "items": {}}
+    )
     if state.get("run_id") != run_id:
         raise IngestError("run identity mismatch")
     state["items"][name] = {"status": status, **detail}
     atomic_json(path, state)
-    applied = len({item["model_name"] for item in state["items"].values()
-                   if item["status"] == "applied"})
+    applied = len(
+        {item["model_name"] for item in state["items"].values() if item["status"] == "applied"}
+    )
     target = int(os.environ.get("INGEST_MAX_NEW", "1"))
     done = applied >= target
-    result = {"version": 1, "run_id": run_id, "task": "ingest",
-              "slug": os.environ.get("AGENT_SLUG", "seed"),
-              "status": "done" if done else "needs_human",
-              "validation_status": "passed" if done else "skipped",
-              "checks": [{"name": "applied_entries", "status": "passed" if done else "skipped"}],
-              "reason": f"已应用 {applied}/{target} 篇；逐篇结果见 ingest.json", "items": state["items"]}
+    result = {
+        "version": 1,
+        "run_id": run_id,
+        "task": "ingest",
+        "slug": os.environ.get("AGENT_SLUG", "seed"),
+        "status": "done" if done else "needs_human",
+        "validation_status": "passed" if done else "skipped",
+        "checks": [{"name": "applied_entries", "status": "passed" if done else "skipped"}],
+        "reason": f"已应用 {applied}/{target} 篇；逐篇结果见 ingest.json",
+        "items": state["items"],
+    }
     atomic_json(run / "task_result.json", result)
-    (run / "report.md").write_text("# Ingest\n\n" + result["reason"] + "\n\n" + "\n".join(
-        f"- {key}: {item['status']}" for key, item in state["items"].items()) + "\n", encoding="utf-8")
+    (run / "report.md").write_text(
+        "# Ingest\n\n"
+        + result["reason"]
+        + "\n\n"
+        + "\n".join(f"- {key}: {item['status']}" for key, item in state["items"].items())
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _stdio_json(payload: dict, as_json: bool = True) -> None:

@@ -6,19 +6,20 @@ import json
 import os
 import sys
 import tempfile
-import zipfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "task/ingest/scripts"))
-import _state as state
 import _entry as entry
-import audit_scan
+import _state as state
 import acquire_repo
-from hubkit import render, readers
-from hubkit.schema import CSV_COLUMNS, INDEX_FILES, ENTRIES_ROOT, entry_path
-from _fixtures import row, readme
+import audit_scan
+from _fixtures import readme, row
+
+from hubkit import readers, render
+from hubkit.schema import CSV_COLUMNS, ENTRIES_ROOT, INDEX_FILES, entry_path
 
 
 class IngestTests(unittest.TestCase):
@@ -33,17 +34,23 @@ class IngestTests(unittest.TestCase):
             p = patch.object(state, key, value)
             p.start()
             self.addCleanup(p.stop)
-        p = patch.dict(os.environ, {
-            "AGENT_RUN_ID": "t1",
-            "AGENT_RUN_DIR": str(self.run),
-            "AGENT_SLUG": "seed",
-            "INGEST_MAX_NEW": "1",
-        }, clear=True)
+        p = patch.dict(
+            os.environ,
+            {
+                "AGENT_RUN_ID": "t1",
+                "AGENT_RUN_DIR": str(self.run),
+                "AGENT_SLUG": "seed",
+                "INGEST_MAX_NEW": "1",
+            },
+            clear=True,
+        )
         p.start()
         self.addCleanup(p.stop)
         self.seed = row()
         self.write_entry(self.seed)
-        (self.hub / "README.md").write_text(readme(self.seed, "single_cell_models/"), encoding="utf-8")
+        (self.hub / "README.md").write_text(
+            readme(self.seed, "single_cell_models/"), encoding="utf-8"
+        )
         (self.hub / ENTRIES_ROOT / "README.md").write_text(readme(self.seed), encoding="utf-8")
         (self.hub / ".gitignore").write_text("", encoding="utf-8")
         buf = io.StringIO()
@@ -59,14 +66,25 @@ class IngestTests(unittest.TestCase):
         (root / "repo").mkdir()
         (root / "paper" / f"{item['model_name']}.pdf").write_bytes(b"%PDF" + b"x" * 60000)
         (root / "repo/main.py").write_text("seed = 1\n")
-        (root / "README.md").write_text(render.render_model_readme(item["model_name"], item, "official", "repository cloned at commit " + item["commit_hash"]), encoding="utf-8")
+        (root / "README.md").write_text(
+            render.render_model_readme(
+                item["model_name"],
+                item,
+                "official",
+                "repository cloned at commit " + item["commit_hash"],
+            ),
+            encoding="utf-8",
+        )
 
     def payload(self, name="New"):
         item = row(name)
         if name != "Seed":
             item["commit_hash"] = "b" * 40
-        return {**item, "verdict": "official",
-                "code_availability": "https://github.com/example/" + name}
+        return {
+            **item,
+            "verdict": "official",
+            "code_availability": "https://github.com/example/" + name,
+        }
 
     def materials(self, pdf_name="paper.pdf"):
         paper = self.run / "paper"
@@ -107,7 +125,9 @@ class IngestTests(unittest.TestCase):
         self.assertEqual(entry.digest(self.hub), before)
         staged = self.run / "staged"
         expected = {rel: (staged / rel).read_bytes() for rel in INDEX_FILES}
-        with patch.object(render, "entry_files", side_effect=AssertionError("apply must not render")):
+        with patch.object(
+            render, "entry_files", side_effect=AssertionError("apply must not render")
+        ):
             self.assertTrue(entry.apply()["applied"])
         for rel, contents in expected.items():
             self.assertEqual((self.hub / rel).read_bytes(), contents)
@@ -139,7 +159,9 @@ class IngestTests(unittest.TestCase):
         entry.apply()
         rows, _ = readers.load_models_csv(self.hub)
         self.assertEqual(len(rows), 1)
-        self.assertEqual((self.hub / entry_path("Seed") / "repo/main.py").read_text(), "candidate = 2\n")
+        self.assertEqual(
+            (self.hub / entry_path("Seed") / "repo/main.py").read_text(), "candidate = 2\n"
+        )
         self.assertFalse(audit_scan.scan()["anomalies"])
 
     def test_hub_change_invalidates_stage(self):
@@ -188,19 +210,27 @@ class IngestTests(unittest.TestCase):
         head.json.return_value = {"sha": "a" * 40}
         target = self.root / "archive"
         target.mkdir()
-        with patch.object(acquire_repo, "gh_api", side_effect=[meta, head]), \
-             patch.object(acquire_repo, "http_get_stream", return_value=blob.getvalue()):
-            result = acquire_repo._github_archive(
-                "https://github.com/example/repo", target)
+        with (
+            patch.object(acquire_repo, "gh_api", side_effect=[meta, head]),
+            patch.object(acquire_repo, "http_get_stream", return_value=blob.getvalue()),
+        ):
+            result = acquire_repo._github_archive("https://github.com/example/repo", target)
         self.assertEqual(result["commit"], "a" * 40)
         self.assertEqual(result["files"], 1)
         self.assertEqual((target / "main.py").read_text(), "answer = 42\n")
         self.assertFalse((target / "weights/model.bin").exists())
         self.assertFalse((target / "escape.txt").exists())
-        with patch.object(acquire_repo, "_run_git", side_effect=__import__("subprocess").CalledProcessError(1, "git")), \
-             patch.object(acquire_repo, "_github_archive", return_value=result) as fallback:
-            self.assertEqual(acquire_repo._github(
-                "https://github.com/example/repo", target), result)
+        with (
+            patch.object(
+                acquire_repo,
+                "_run_git",
+                side_effect=__import__("subprocess").CalledProcessError(1, "git"),
+            ),
+            patch.object(acquire_repo, "_github_archive", return_value=result) as fallback,
+        ):
+            self.assertEqual(
+                acquire_repo._github("https://github.com/example/repo", target), result
+            )
             fallback.assert_called_once()
 
     def test_acquire_repo_reuses_empty_placeholder_only(self):
@@ -210,9 +240,11 @@ class IngestTests(unittest.TestCase):
         saved.write_text("old = 1\n")
         self.assertNotEqual(saved.stat().st_size, 0)
         url = "https://github.com/example/New"
-        with patch.object(acquire_repo, "load_dotenv"), \
-             patch.object(sys, "argv", ["acquire_repo.py", url]), \
-             patch.object(acquire_repo, "_github") as github:
+        with (
+            patch.object(acquire_repo, "load_dotenv"),
+            patch.object(sys, "argv", ["acquire_repo.py", url]),
+            patch.object(acquire_repo, "_github") as github,
+        ):
             self.assertEqual(acquire_repo.main(), 2)
             github.assert_not_called()
             saved.unlink()
@@ -226,7 +258,9 @@ class IngestTests(unittest.TestCase):
     def test_run_result_depends_on_actual_apply(self):
         self.materials()
         entry.stage(self.payload())
-        self.assertEqual(json.loads((self.run / "task_result.json").read_text())["status"], "needs_human")
+        self.assertEqual(
+            json.loads((self.run / "task_result.json").read_text())["status"], "needs_human"
+        )
         entry.apply()
         result = json.loads((self.run / "task_result.json").read_text())
         self.assertEqual(result["status"], "done")
@@ -264,9 +298,11 @@ class ApplyGateTests(unittest.TestCase):
 
     def _run(self, argv, env):
         buf = io.StringIO()
-        with patch.object(sys, "argv", ["apply_entry.py", *argv]), \
-                patch.dict(os.environ, env, clear=False), \
-                contextlib.redirect_stderr(buf):
+        with (
+            patch.object(sys, "argv", ["apply_entry.py", *argv]),
+            patch.dict(os.environ, env, clear=False),
+            contextlib.redirect_stderr(buf),
+        ):
             code = apply_entry.main()
         return code, buf.getvalue()
 

@@ -12,7 +12,6 @@ fixtures 设计注意：中性 owner（sctools）不得与作者姓（doe）撞�
 
 import json
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,7 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "task/ingest/scripts"))
 
-import github_search as gs  # noqa: E402
+import github_search as gs
 
 CONTEXT = {
     "paper_title": "Universal Cell Embeddings foundation model",
@@ -43,16 +42,14 @@ class FakeResp:
     def raise_for_status(self):
         if self.status_code >= 400:
             import httpx
+
             raise httpx.HTTPStatusError("err", request=None, response=None)
 
 
 def _gh(meta, readme_text=None, profile=None):
-    login = meta.get("owner", {}).get("login", "")
-
     def fake_gh_api(path, params=None, headers=None):
         if path.startswith("/repos/") and path.endswith("/readme"):
-            return FakeResp(200 if readme_text is not None else 404,
-                            text=readme_text or "")
+            return FakeResp(200 if readme_text is not None else 404, text=readme_text or "")
         if path.startswith("/repos/"):
             return FakeResp(200, meta)
         if path.startswith("/users/"):
@@ -62,13 +59,16 @@ def _gh(meta, readme_text=None, profile=None):
     return fake_gh_api
 
 
-def _meta(login="sctools", fork=False, stars=12, description="single-cell tools",
-          full_name=None):
+def _meta(login="sctools", fork=False, stars=12, description="single-cell tools", full_name=None):
     name = full_name or f"{login}/repo"
-    return {"owner": {"login": login}, "fork": fork,
-            "stargazers_count": stars, "description": description,
-            "full_name": name,
-            "html_url": f"https://github.com/{name}"}
+    return {
+        "owner": {"login": login},
+        "fork": fork,
+        "stargazers_count": stars,
+        "description": description,
+        "full_name": name,
+        "html_url": f"https://github.com/{name}",
+    }
 
 
 README_WITH_PHRASE = "we release universal cell embeddings at github.com/x\n"
@@ -84,14 +84,14 @@ def _probe(monkeypatch, meta, readme_text, context_over=None, profile=None):
 
 class TestVerdictMatrix:
     def test_code_availability_and_readme_recognition_official(self, monkeypatch):
-        r = _probe(monkeypatch, _meta(), README_WITH_PHRASE,
-                   context_over={"code_availability": True})
+        r = _probe(
+            monkeypatch, _meta(), README_WITH_PHRASE, context_over={"code_availability": True}
+        )
         assert r["verdict"] == "official"
         assert "renamed_from" not in r
 
     def test_readme_and_author_match_official(self, monkeypatch):
-        r = _probe(monkeypatch, _meta(), README_WITH_PHRASE,
-                   profile={"name": "Jane Doe"})
+        r = _probe(monkeypatch, _meta(), README_WITH_PHRASE, profile={"name": "Jane Doe"})
         assert r["verdict"] == "official"
 
     def test_readme_recognition_alone_is_likely(self, monkeypatch):
@@ -99,8 +99,7 @@ class TestVerdictMatrix:
         assert r["verdict"] == "likely"
 
     def test_code_availability_alone_is_likely(self, monkeypatch):
-        r = _probe(monkeypatch, _meta(), None,
-                   context_over={"code_availability": True})
+        r = _probe(monkeypatch, _meta(), None, context_over={"code_availability": True})
         assert r["verdict"] == "likely"
 
     def test_author_match_alone_is_author_maintained(self, monkeypatch):
@@ -127,15 +126,18 @@ class TestCanonicalRename:
     def test_meta_full_name_differs_marks_renamed_from(self, monkeypatch):
         # gh api 返回的 canonical 全名 ≠ 请求名 → renamed_from 标注，
         # 且去重键（repo 字段）取 canonical 新地址
-        r = _probe(monkeypatch, _meta(full_name="sctools/repo-moved"),
-                   README_WITH_PHRASE, profile={"name": "Jane Doe"})
+        r = _probe(
+            monkeypatch,
+            _meta(full_name="sctools/repo-moved"),
+            README_WITH_PHRASE,
+            profile={"name": "Jane Doe"},
+        )
         assert r["renamed_from"] == "sctools/repo"
         assert r["repo"] == "sctools/repo-moved"
         assert r["repo_url"] == "https://github.com/sctools/repo-moved"
 
     def test_case_only_difference_is_not_a_rename(self, monkeypatch):
-        r = _probe(monkeypatch, _meta(full_name="SCTools/Repo"),
-                   README_WITH_PHRASE)
+        r = _probe(monkeypatch, _meta(full_name="SCTools/Repo"), README_WITH_PHRASE)
         assert "renamed_from" not in r
 
 
@@ -146,8 +148,13 @@ class TestEvidenceDetails:
 
     def test_family_name_too_short_ignored(self, monkeypatch):
         # 作者姓 <3 字符不参与匹配（防误报）
-        r = _probe(monkeypatch, _meta(), None,
-                   context_over={"authors": ["Al Wu"]}, profile={"name": "Wu X"})
+        r = _probe(
+            monkeypatch,
+            _meta(),
+            None,
+            context_over={"authors": ["Al Wu"]},
+            profile={"name": "Wu X"},
+        )
         assert r["evidence"]["author_match"] is False
 
     def test_not_fork_evidence(self, monkeypatch):
@@ -187,9 +194,19 @@ class TestParseRepo:
 
 class TestMain:
     def _argv(self, extra):
-        return ["github_search.py", "https://github.com/sctools/repo", "--probe",
-                "--title", CONTEXT["paper_title"], "--arxiv-id", CONTEXT["arxiv_id"],
-                "--authors", "Jane Doe", *extra, "--json"]
+        return [
+            "github_search.py",
+            "https://github.com/sctools/repo",
+            "--probe",
+            "--title",
+            CONTEXT["paper_title"],
+            "--arxiv-id",
+            CONTEXT["arxiv_id"],
+            "--authors",
+            "Jane Doe",
+            *extra,
+            "--json",
+        ]
 
     def test_likely_prints_needs_human_to_stderr(self, monkeypatch, capsys):
         monkeypatch.setattr(gs, "gh_api", _gh(_meta(), README_WITH_PHRASE))
@@ -218,38 +235,41 @@ def cache_root(tmp_path):
 
 
 def _fake_response():
-    return httpx.Response(200, content=b'{"ok": 1}',
-                          request=httpx.Request("GET", "https://x/y"))
+    return httpx.Response(200, content=b'{"ok": 1}', request=httpx.Request("GET", "https://x/y"))
 
 
-@pytest.mark.parametrize("url", [
-    "https://api.github.com/repos/a/b",
-    "https://raw.githubusercontent.com/a/b/main/README.md",
-    "https://huggingface.co/a/b",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.github.com/repos/a/b",
+        "https://raw.githubusercontent.com/a/b/main/README.md",
+        "https://huggingface.co/a/b",
+    ],
+)
 def test_volatile_hosts_not_cacheable(url):
     assert not _net._cacheable(url)
 
 
-@pytest.mark.parametrize("url", [
-    "https://api.semanticscholar.org/graph/v1/paper/x",
-    "https://export.arxiv.org/api/query",
-    "https://api.unpaywall.org/v2/10.1/x",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.semanticscholar.org/graph/v1/paper/x",
+        "https://export.arxiv.org/api/query",
+        "https://api.unpaywall.org/v2/10.1/x",
+    ],
+)
 def test_stable_hosts_cacheable(url):
     assert _net._cacheable(url)
 
 
 def test_volatile_endpoint_not_written_to_disk(cache_root):
-    with patch.object(_net, "_throttle"), \
-            patch.object(_net, "_get", return_value=_fake_response()):
+    with patch.object(_net, "_throttle"), patch.object(_net, "_get", return_value=_fake_response()):
         _net.http_get("https://api.github.com/repos/a/b")
     assert not cache_root.exists()
 
 
 def test_stable_endpoint_written_atomically(cache_root):
-    with patch.object(_net, "_throttle"), \
-            patch.object(_net, "_get", return_value=_fake_response()):
+    with patch.object(_net, "_throttle"), patch.object(_net, "_get", return_value=_fake_response()):
         _net.http_get("https://api.semanticscholar.org/graph/v1/paper/x")
     assert len(list(cache_root.glob("*.cache"))) == 1
     assert list(cache_root.glob("*.tmp")) == []
@@ -257,8 +277,10 @@ def test_stable_endpoint_written_atomically(cache_root):
 
 def test_cache_hit_is_indistinguishable(cache_root):
     """缓存透明：第二次零网络、内容一致、无伪造标记头。"""
-    with patch.object(_net, "_throttle"), \
-            patch.object(_net, "_get", return_value=_fake_response()) as get:
+    with (
+        patch.object(_net, "_throttle"),
+        patch.object(_net, "_get", return_value=_fake_response()) as get,
+    ):
         first = _net.http_get("https://api.semanticscholar.org/graph/v1/paper/x")
         second = _net.http_get("https://api.semanticscholar.org/graph/v1/paper/x")
     assert get.call_count == 1
@@ -267,9 +289,10 @@ def test_cache_hit_is_indistinguishable(cache_root):
 
 
 def test_cache_false_bypasses_cache(cache_root):
-    with patch.object(_net, "_throttle"), \
-            patch.object(_net, "_get", return_value=_fake_response()) as get:
-        _net.http_get("https://api.semanticscholar.org/graph/v1/paper/x",
-                      cache=False)
+    with (
+        patch.object(_net, "_throttle"),
+        patch.object(_net, "_get", return_value=_fake_response()) as get,
+    ):
+        _net.http_get("https://api.semanticscholar.org/graph/v1/paper/x", cache=False)
     assert get.call_count == 1
     assert not cache_root.exists()

@@ -3,12 +3,14 @@
 Stateless: the entry payload is passed via --payload; materials are read from
 the run workdir (paper/, repo/); staged files land in <workdir>/staged/.
 """
+
 import argparse
 import json
 import sys
 
 from _entry import stage
 from _state import IngestError, _stdio_json
+
 from hubkit.render import ContractError
 
 

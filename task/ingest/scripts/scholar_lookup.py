@@ -15,29 +15,30 @@ fields: 标题/作者/年份/venue/DOI/abstract/openAccessPdf/引用数。
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 import time
 
-from _state import _stdio_json
 from _net import http_get, load_dotenv
+from _state import _stdio_json
 
 S2 = "https://api.semanticscholar.org/graph/v1"
-FIELDS = ("title,externalIds,year,venue,authors,abstract,openAccessPdf,"
-          "citationCount,publicationDate")
+FIELDS = "title,externalIds,year,venue,authors,abstract,openAccessPdf,citationCount,publicationDate"
 
 
 def classify(seed: str) -> tuple[str, str]:
     for prefix, sid in (("doi:", "DOI:"), ("arxiv:", "ARXIV:"), ("pmid:", "PMID:")):
         if seed.startswith(prefix):
-            return "paper", sid + seed[len(prefix):]
+            return "paper", sid + seed[len(prefix) :]
     if seed.startswith(("http://", "https://")):
-        m = (re.search(r"arxiv\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,5})", seed)
-             or re.search(r"doi\.org/(10\.[^\s]+)$", seed))
+        m = re.search(r"arxiv\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,5})", seed) or re.search(
+            r"doi\.org/(10\.[^\s]+)$", seed
+        )
         if not m:
-            raise SystemExit("needs_human: URL 无法提取 DOI/arXiv id，"
-                             "请先 fetch_page 取 citation 元数据再以 doi:/arxiv: 重试")
+            raise SystemExit(
+                "needs_human: URL 无法提取 DOI/arXiv id，"
+                "请先 fetch_page 取 citation 元数据再以 doi:/arxiv: 重试"
+            )
         val = m.group(1)
         sid = f"ARXIV:{val}" if "arxiv" in seed.lower() else f"DOI:{val}"
         return "paper", sid
@@ -54,6 +55,7 @@ def paper_detail(s2_id: str) -> dict:
 
 def keyword_search(query: str, limit: int) -> list[dict]:
     import os
+
     params: dict = {"query": query, "fields": FIELDS, "limit": min(limit, 100)}
     y_from, y_to = os.environ.get("INGEST_YEAR_FROM"), os.environ.get("INGEST_YEAR_TO")
     if y_from and y_to:
@@ -82,15 +84,23 @@ def compact(p: dict) -> dict:
     ext = p.get("externalIds") or {}
     oa = (p.get("openAccessPdf") or {}).get("url")
     doi = ext.get("DOI")
-    paper_url = (f"https://doi.org/{doi}" if doi else
-                 (f"https://arxiv.org/abs/{ext.get('ArXiv')}" if ext.get("ArXiv")
-                  else p.get("url", "")))
+    paper_url = (
+        f"https://doi.org/{doi}"
+        if doi
+        else (f"https://arxiv.org/abs/{ext.get('ArXiv')}" if ext.get("ArXiv") else p.get("url", ""))
+    )
     return {
-        "title": p.get("title"), "year": p.get("year"), "venue": p.get("venue"),
-        "doi": doi, "arxiv_id": ext.get("ArXiv"), "pmid": ext.get("PubMed"),
-        "paper_url": paper_url, "openaccesspdf_url": oa,
+        "title": p.get("title"),
+        "year": p.get("year"),
+        "venue": p.get("venue"),
+        "doi": doi,
+        "arxiv_id": ext.get("ArXiv"),
+        "pmid": ext.get("PubMed"),
+        "paper_url": paper_url,
+        "openaccesspdf_url": oa,
         "authors": [a.get("name") for a in (p.get("authors") or [])],
-        "citation_count": p.get("citationCount"), "abstract": (p.get("abstract") or "")[:600],
+        "citation_count": p.get("citationCount"),
+        "abstract": (p.get("abstract") or "")[:600],
     }
 
 
@@ -105,12 +115,19 @@ def main() -> int:
     mode, ident = classify(args.seed)
     if mode == "paper":
         result = paper_detail(ident)
-        payload = ({"status": "ok", "mode": "paper", "paper": compact(result)}
-                   if result.get("title") else result)
+        payload = (
+            {"status": "ok", "mode": "paper", "paper": compact(result)}
+            if result.get("title")
+            else result
+        )
     else:
         hits = keyword_search(ident, args.limit)
-        payload = {"status": "ok", "mode": "search", "count": len(hits),
-                   "papers": [compact(p) for p in hits]}
+        payload = {
+            "status": "ok",
+            "mode": "search",
+            "count": len(hits),
+            "papers": [compact(p) for p in hits],
+        }
     _stdio_json(payload, args.json)
     return 0
 

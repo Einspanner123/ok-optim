@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "task/ingest/scripts"))
 
-import extract_repo_links as erl  # noqa: E402
+import extract_repo_links as erl
 
 FULLTEXT = """
 Universal Cell Embeddings: A Foundation Model
@@ -51,10 +51,12 @@ class TestExtract:
     def test_links_extracted_and_deduped(self):
         r = _extract(FULLTEXT)
         # 正文 3 个 + availability 段的 tree/main 变体（不同 URL，均合法）
-        assert r["links"] == ["https://github.com/sctools/uce",
-                              "https://www.huggingface.co/sctools/uce",
-                              "https://zenodo.org/record/12345",
-                              "https://huggingface.co/sctools/uce/tree/main"]
+        assert r["links"] == [
+            "https://github.com/sctools/uce",
+            "https://www.huggingface.co/sctools/uce",
+            "https://zenodo.org/record/12345",
+            "https://huggingface.co/sctools/uce/tree/main",
+        ]
 
     def test_trailing_period_stripped(self):
         r = _extract(FULLTEXT)
@@ -91,8 +93,10 @@ def workdir(tmp_path: Path, monkeypatch):
 
 
 def _run_main(texts, workdir):
-    with patch("pypdf.PdfReader", _reader_for(*texts)), \
-         patch.object(sys, "argv", ["extract_repo_links.py", "--json"]):
+    with (
+        patch("pypdf.PdfReader", _reader_for(*texts)),
+        patch.object(sys, "argv", ["extract_repo_links.py", "--json"]),
+    ):
         return erl.main()
 
 

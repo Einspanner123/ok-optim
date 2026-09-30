@@ -123,14 +123,14 @@ def _decode_value(key: str, raw: str | None, default=None):
     if key in DECODE_FLOAT_RANGES:
         try:
             value = float(raw)
-        except ValueError:
-            raise PreflightError(f"{key} 必须是数字: {raw!r}")
+        except ValueError as err:
+            raise PreflightError(f"{key} 必须是数字: {raw!r}") from err
         lo, hi = DECODE_FLOAT_RANGES[key]
     elif key in DECODE_INT_RANGES:
         try:
             value = int(raw)
-        except ValueError:
-            raise PreflightError(f"{key} 必须是整数: {raw!r}")
+        except ValueError as err:
+            raise PreflightError(f"{key} 必须是整数: {raw!r}") from err
         lo, hi = DECODE_INT_RANGES[key]
     else:  # pragma: no cover - 表驱动遗漏防护
         raise PreflightError(f"未知的解码参数键: {key}")
@@ -159,13 +159,8 @@ def decode_params(env: dict[str, str]) -> tuple[dict, object]:
     pi 的 maxTokens 字段；扩展参数（seed/top_k/min_p/presence_penalty/
     repetition_penalty）仅显式设置时发送。返回 (samplingParams, max_tokens)。
     """
-    parsed = [
-        _decode_value(key, env.get(key), default)
-        for key, default in DECODE_DEFAULTS.items()
-    ]
-    parsed += [
-        _decode_value(key, env.get(key)) for key in DECODE_OPTIONAL
-    ]
+    parsed = [_decode_value(key, env.get(key), default) for key, default in DECODE_DEFAULTS.items()]
+    parsed += [_decode_value(key, env.get(key)) for key in DECODE_OPTIONAL]
     sampling = {param: value for param, value in parsed if value is not None}
     max_tokens = sampling.pop("max_tokens")
     return sampling, max_tokens
@@ -230,8 +225,9 @@ def render_guard() -> Path:
     return dst
 
 
-def load_profile(config_path: str | None, profile_name: str | None,
-                 spec: SkillSpec) -> tuple[dict[str, str], dict]:
+def load_profile(
+    config_path: str | None, profile_name: str | None, spec: SkillSpec
+) -> tuple[dict[str, str], dict]:
     """加载 --config 运行方案，返回 (env, flags)；未提供 --config 返回空。
 
     结构：单方案 = 顶层 {env?, flags?}；多方案 = {defaults?, profiles: {name: {...}}}，
@@ -255,11 +251,13 @@ def load_profile(config_path: str | None, profile_name: str | None,
         if not isinstance(profiles, dict) or not profiles:
             raise PreflightError("config 的 profiles 必须为非空 mapping")
         if not profile_name:
-            raise PreflightError("config 含多个方案，需要 --profile 指定其一: "
-                                 + ", ".join(sorted(profiles)))
+            raise PreflightError(
+                "config 含多个方案，需要 --profile 指定其一: " + ", ".join(sorted(profiles))
+            )
         if profile_name not in profiles:
-            raise PreflightError(f"未知方案: {profile_name}（可用: "
-                                 + ", ".join(sorted(profiles)) + "）")
+            raise PreflightError(
+                f"未知方案: {profile_name}（可用: " + ", ".join(sorted(profiles)) + "）"
+            )
         defaults, chosen = data.get("defaults") or {}, profiles[profile_name]
     else:
         if profile_name:
@@ -270,8 +268,9 @@ def load_profile(config_path: str | None, profile_name: str | None,
             raise PreflightError(f"config {label} 必须为 mapping")
         unknown = set(section) - {"env", "flags"}
         if unknown:
-            raise PreflightError(f"config {label} 含未知键: {', '.join(sorted(unknown))}"
-                                 "（允许: env, flags）")
+            raise PreflightError(
+                f"config {label} 含未知键: {', '.join(sorted(unknown))}（允许: env, flags）"
+            )
     whitelist = set(spec.required_env) | set(spec.optional_env)
     env: dict[str, str] = {}
     for source in (defaults.get("env") or {}, chosen.get("env") or {}):

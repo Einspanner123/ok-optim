@@ -13,11 +13,10 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
-from pathlib import Path
 
+from _net import extract_metadata, http_get, http_get_stream, load_dotenv
 from _state import _stdio_json, workdir
-from _net import http_get, http_get_stream, load_dotenv
-from _net import extract_metadata
+
 from hubkit.schema import PDF_MAGIC, PDF_MIN_BYTES
 
 
@@ -45,13 +44,11 @@ def chain_urls(cand: dict) -> list[tuple[str, str]]:
     if cand.get("doi"):
         email = __import__("os").environ.get("EMAIL", "")
         if email:
-            urls.append(("unpaywall",
-                         f"https://api.unpaywall.org/v2/{cand['doi']}?email={email}"))
+            urls.append(("unpaywall", f"https://api.unpaywall.org/v2/{cand['doi']}?email={email}"))
     return urls
 
 
 def _unpaywall_pdf(url: str) -> str | None:
-    import json as _json
     resp = http_get(url)
     if resp.status_code != 200:
         return None
@@ -73,7 +70,7 @@ def try_chain(cand: dict) -> tuple[bytes, str] | None:
             data = http_get_stream(url, timeout=30.0)
             if _ok_pdf(data):
                 return data, source
-        except Exception:
+        except Exception:  # noqa: S112 - 多源链：单个源失败即换下一个
             continue
     # citation_pdf_url 现取（未预登记时）
     paper_url = cand.get("paper_url")
@@ -86,7 +83,7 @@ def try_chain(cand: dict) -> tuple[bytes, str] | None:
                 data = http_get_stream(cpdf, timeout=30.0)
                 if _ok_pdf(data):
                     return data, "citation_pdf_url"
-        except Exception:
+        except Exception:  # noqa: S110 - 现取的 citation_pdf_url 失败不影响主链
             pass
     return None
 
@@ -102,8 +99,13 @@ def main() -> int:
     args = parser.parse_args()
     load_dotenv()
 
-    cand = {"paper_url": args.paper_url, "arxiv_id": args.arxiv_id, "doi": args.doi,
-            "openaccesspdf_url": args.s2_pdf, "citation_pdf_url": args.citation_pdf_url}
+    cand = {
+        "paper_url": args.paper_url,
+        "arxiv_id": args.arxiv_id,
+        "doi": args.doi,
+        "openaccesspdf_url": args.s2_pdf,
+        "citation_pdf_url": args.citation_pdf_url,
+    }
     paper_dir = workdir() / "paper"
     paper_dir.mkdir(parents=True, exist_ok=True)
 
@@ -117,16 +119,14 @@ def main() -> int:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_handler)
     if not got:
-        payload = {"status": "pdf_needs_manual",
-                   "tried": [s for s, _ in chain_urls(cand)]}
+        payload = {"status": "pdf_needs_manual", "tried": [s for s, _ in chain_urls(cand)]}
         _stdio_json(payload, args.json)
         print("needs_human: 多源链全部失败（pdf_needs_manual）", file=sys.stderr)
         return 2
     data, source = got
     pdf_path = paper_dir / "paper.pdf"
     pdf_path.write_bytes(data)
-    payload = {"status": "downloaded", "source": source,
-               "path": str(pdf_path), "bytes": len(data)}
+    payload = {"status": "downloaded", "source": source, "path": str(pdf_path), "bytes": len(data)}
     _stdio_json(payload, args.json)
     return 0
 

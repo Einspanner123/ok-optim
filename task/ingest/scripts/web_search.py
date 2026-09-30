@@ -11,24 +11,26 @@ from __future__ import annotations
 import argparse
 import sys
 
-from _state import _stdio_json
 from _net import load_dotenv
+from _state import _stdio_json
 
 
 def search(query: str, limit: int) -> dict:
     try:
         from ddgs import DDGS
     except ImportError:
-        return {"status": "web_search_unavailable", "reason": "ddgs 未安装",
-                "results": []}
+        return {"status": "web_search_unavailable", "reason": "ddgs 未安装", "results": []}
     try:
         hits = DDGS().text(query, max_results=limit)
     except Exception as exc:
-        return {"status": "web_search_unavailable", "reason": str(exc)[:200],
-                "results": []}
-    return {"status": "ok", "results": [
-        {"title": h.get("title"), "url": h.get("href"),
-         "snippet": (h.get("body") or "")[:300]} for h in hits]}
+        return {"status": "web_search_unavailable", "reason": str(exc)[:200], "results": []}
+    return {
+        "status": "ok",
+        "results": [
+            {"title": h.get("title"), "url": h.get("href"), "snippet": (h.get("body") or "")[:300]}
+            for h in hits
+        ],
+    }
 
 
 def main() -> int:

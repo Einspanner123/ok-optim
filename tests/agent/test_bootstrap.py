@@ -7,7 +7,6 @@ import pytest
 
 from agent import bootstrap
 
-
 NODE_DIRNAME = f"node-{bootstrap.NODE_VERSION}-linux-arm64"
 
 
@@ -46,23 +45,24 @@ class TestEnsureNode:
         assert bootstrap.ensure_node() == node
         assert called["n"] == 0
 
-    def test_download_with_correct_sha_extracts(self, vendor: Path, tmp_path: Path,
-                                                monkeypatch):
+    def test_download_with_correct_sha_extracts(self, vendor: Path, tmp_path: Path, monkeypatch):
         tarball = _make_tarball(tmp_path, "node")
         import hashlib
+
         digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
         monkeypatch.setitem(bootstrap.NODE_SHA256, "arm64", digest)
-        monkeypatch.setattr(bootstrap.urllib.request, "urlretrieve",
-                            lambda url, dest: shutil_copy(tarball, dest))
+        monkeypatch.setattr(
+            bootstrap.urllib.request, "urlretrieve", lambda url, dest: shutil_copy(tarball, dest)
+        )
         node = bootstrap.ensure_node()
         assert node.is_file()
         assert not list(vendor.glob("*.tar.gz"))  # 下载物清理
 
-    def test_sha_mismatch_aborts_and_cleans(self, vendor: Path, tmp_path: Path,
-                                            monkeypatch):
+    def test_sha_mismatch_aborts_and_cleans(self, vendor: Path, tmp_path: Path, monkeypatch):
         tarball = _make_tarball(tmp_path, "node")
-        monkeypatch.setattr(bootstrap.urllib.request, "urlretrieve",
-                            lambda url, dest: shutil_copy(tarball, dest))
+        monkeypatch.setattr(
+            bootstrap.urllib.request, "urlretrieve", lambda url, dest: shutil_copy(tarball, dest)
+        )
         with pytest.raises(SystemExit, match="SHA256"):
             bootstrap.ensure_node()
         assert not list(vendor.glob("*.tar.gz"))  # 坏包已删除
@@ -70,6 +70,7 @@ class TestEnsureNode:
 
 def shutil_copy(src: Path, dest: Path) -> None:
     import shutil
+
     shutil.copy(src, dest)
 
 

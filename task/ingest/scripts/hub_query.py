@@ -33,7 +33,9 @@ def _human(payload: dict) -> None:
         print(f"model_name {payload['query']['model']}: {mark}")
     if "entries" in payload and "query" not in payload:
         for entry in payload["entries"]:
-            print(f"- {entry['model_name']} ({entry['year']} {entry['venue']}): {entry['repo_url']}")
+            print(
+                f"- {entry['model_name']} ({entry['year']} {entry['venue']}): {entry['repo_url']}"
+            )
         print(f"共 {payload['count']} 条")
 
 
@@ -55,15 +57,18 @@ def main() -> int:
         payload: dict = {"hub": str(hub)}
         if args.repo:
             match = readers.find_by_repo(hub, args.repo)
-            payload.update(query={"repo": readers.repo_key(args.repo)},
-                           found=match is not None,
-                           match=readers._compact(match) if match else None)
+            payload.update(
+                query={"repo": readers.repo_key(args.repo)},
+                found=match is not None,
+                match=readers._compact(match) if match else None,
+            )
         if args.model:
             match = readers.find_by_model(hub, args.model)
-            payload.update(query={**(payload.get("query") or {}),
-                                  "model": args.model},
-                           found=payload.get("found", False) or match is not None,
-                           match=readers._compact(match) if match else payload.get("match"))
+            payload.update(
+                query={**(payload.get("query") or {}), "model": args.model},
+                found=payload.get("found", False) or match is not None,
+                match=readers._compact(match) if match else payload.get("match"),
+            )
         if args.list:
             entries = readers.list_entries(hub)
             payload.update(entries=entries, count=len(entries))

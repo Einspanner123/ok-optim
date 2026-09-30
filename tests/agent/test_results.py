@@ -4,10 +4,10 @@ import io
 import json
 import os
 import sys
-import time
-from pathlib import Path
 import tempfile
+import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from agent import assembly, journal, launcher
@@ -25,14 +25,24 @@ class ResultTests(unittest.TestCase):
         header = {"type": "session", "id": "session-1"}
         messages = []
         if tools:
-            messages.append({"role": "assistant", "stopReason": "toolUse",
-                             "content": [{"type": "toolCall", "name": "bash"}],
-                             "usage": {"input": 3, "output": 1, "totalTokens": 4}})
+            messages.append(
+                {
+                    "role": "assistant",
+                    "stopReason": "toolUse",
+                    "content": [{"type": "toolCall", "name": "bash"}],
+                    "usage": {"input": 3, "output": 1, "totalTokens": 4},
+                }
+            )
             messages.append({"role": "toolResult", "content": []})
-        messages.append({"role": "assistant", "stopReason": stop,
-                         "errorMessage": "test error" if stop == "error" else None,
-                         "content": [{"type": "text", "text": "finished"}],
-                         "usage": {"input": 7, "output": 2, "totalTokens": 9}})
+        messages.append(
+            {
+                "role": "assistant",
+                "stopReason": stop,
+                "errorMessage": "test error" if stop == "error" else None,
+                "content": [{"type": "text", "text": "finished"}],
+                "usage": {"input": 7, "output": 2, "totalTokens": 9},
+            }
+        )
         records = [header] + [{"type": "message", "message": m} for m in messages]
         (self.run / "session.jsonl").write_text("\n".join(map(json.dumps, records)) + "\n")
         if events:
@@ -44,9 +54,14 @@ class ResultTests(unittest.TestCase):
 
     def result(self, *, status="done", validation="passed", run_id="run-1", **overrides):
         data = {
-            "version": 1, "run_id": run_id, "task": "hello", "slug": "hello",
-            "status": status, "validation_status": validation,
-            "checks": [{"name": "hello", "status": "passed"}], "reason": "checked",
+            "version": 1,
+            "run_id": run_id,
+            "task": "hello",
+            "slug": "hello",
+            "status": status,
+            "validation_status": validation,
+            "checks": [{"name": "hello", "status": "passed"}],
+            "reason": "checked",
         }
         data.update(overrides)
         (self.run / "task_result.json").write_text(json.dumps(data))
@@ -61,7 +76,8 @@ class ResultTests(unittest.TestCase):
                 self.assertEqual((s.status, s.exit_code), ("no_output", 3))
 
     def test_interactive_session_is_audited(self):
-        self.evidence(events=False); self.result()
+        self.evidence(events=False)
+        self.result()
         s = self.finish(interactive=True)
         self.assertEqual((s.status, s.exit_code), ("done", 0))
         self.assertEqual(s.session_file, "session.jsonl")
@@ -69,18 +85,21 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(s.usage.total_tokens, 13)
 
     def test_json_mode_does_not_double_count_session(self):
-        self.evidence(); self.result()
+        self.evidence()
+        self.result()
         s = self.finish()
         self.assertEqual(s.usage.total_tokens, 13)
         self.assertEqual(s.exit_code, 0)
 
     def test_llm_error_overrides_success_result_and_zero_process_exit(self):
-        self.evidence(stop="error"); self.result()
+        self.evidence(stop="error")
+        self.result()
         s = self.finish()
         self.assertEqual((s.status, s.exit_code), ("llm_error", 3))
 
     def test_process_error_overrides_success(self):
-        self.evidence(); self.result()
+        self.evidence()
+        self.result()
         self.assertEqual(self.finish(1).status, "pi_error")
         self.assertEqual(self.finish(130).status, "interrupted")
 
@@ -91,8 +110,10 @@ class ResultTests(unittest.TestCase):
     def test_business_states_map_to_exit_codes(self):
         self.evidence()
         for status, validation, code in [
-            ("done", "passed", 0), ("done_with_warnings", "warnings", 0),
-            ("needs_human", "skipped", 2), ("skipped_incomplete", "skipped", 2),
+            ("done", "passed", 0),
+            ("done_with_warnings", "warnings", 0),
+            ("needs_human", "skipped", 2),
+            ("skipped_incomplete", "skipped", 2),
             ("failed", "failed", 3),
         ]:
             with self.subTest(status=status):
@@ -108,54 +129,70 @@ class ResultTests(unittest.TestCase):
 
     def test_done_cannot_hide_failed_or_missing_checks(self):
         self.evidence()
-        for override in [{"validation": "failed"}, {"checks": []},
-                         {"checks": [{"name": "bad", "status": "failed"}]}]:
+        for override in [
+            {"validation": "failed"},
+            {"checks": []},
+            {"checks": [{"name": "bad", "status": "failed"}]},
+        ]:
             with self.subTest(override=override):
                 self.result(**override)
                 self.assertEqual(self.finish().status, "invalid_result")
 
     def test_no_tool_evidence_is_not_done(self):
-        self.evidence(tools=False); self.result()
+        self.evidence(tools=False)
+        self.result()
         self.assertEqual(self.finish().status, "incomplete")
 
     def test_truncated_turn_is_not_done(self):
-        self.evidence(stop="length"); self.result()
+        self.evidence(stop="length")
+        self.result()
         self.assertEqual(self.finish().status, "incomplete")
 
     def test_missing_session_is_audit_failure(self):
-        self.evidence(); self.result()
+        self.evidence()
+        self.result()
         (self.run / "session.jsonl").unlink()
         self.assertEqual(self.finish().status, "audit_error")
 
     def test_bad_audit_record_is_not_silently_ignored(self):
-        self.evidence(); self.result()
+        self.evidence()
+        self.result()
         with (self.run / "events.jsonl").open("a") as f:
             f.write('{"type":')
         self.assertEqual(self.finish().status, "audit_error")
 
-
     def test_malformed_message_reports_audit_error(self):
-        self.evidence(); self.result()
+        self.evidence()
+        self.result()
         with (self.run / "events.jsonl").open("a") as f:
             f.write(json.dumps({"type": "message_end", "message": "bad"}) + "\n")
         self.assertEqual(self.finish().status, "audit_error")
 
     def test_prompt_omits_provider_credentials(self):
         spec = assembly.SkillSpec("hello", "", [], ["FOO", "SERVICE_TOKEN"], {})
-        prompt = launcher.build_prompt("hello", spec, {
-            "FOO": "public", "OPENAI_API_KEY": "provider-secret",
-            "SERVICE_TOKEN": "task-secret"})
+        prompt = launcher.build_prompt(
+            "hello",
+            spec,
+            {"FOO": "public", "OPENAI_API_KEY": "provider-secret", "SERVICE_TOKEN": "task-secret"},
+        )
         self.assertIn("public", prompt)
         self.assertNotIn("provider-secret", prompt)
         self.assertNotIn("task-secret", prompt)
 
     def test_silent_pi_process_hits_wall_clock_deadline(self):
         renderer = launcher.QuietRenderer(io.StringIO(), io.StringIO())
-        with patch.object(launcher, "REPO_ROOT", self.root), contextlib.redirect_stderr(io.StringIO()):
+        with (
+            patch.object(launcher, "REPO_ROOT", self.root),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             start = time.monotonic()
             code = launcher.run_pi_json(
                 [sys.executable, "-c", "import time; time.sleep(10)"],
-                dict(os.environ), self.run, renderer, 0.2)
+                dict(os.environ),
+                self.run,
+                renderer,
+                0.2,
+            )
         self.assertEqual(code, 2)
         self.assertLess(time.monotonic() - start, 3)
 
@@ -182,22 +219,36 @@ class ResultTests(unittest.TestCase):
         (self.root / ".venv/bin").mkdir(parents=True)
         (self.root / ".venv/bin/python").write_text("", encoding="utf-8")
         spec = assembly.SkillSpec("hello", "", [], ["FOO"], {"hello": {"args": {}}})
-        args = argparse.Namespace(task="hello", set=[], interactive=False,
-                                  output="quiet", tool_budget=60, timeout=1800,
-                                          thinking="off", config=None, profile=None)
+        args = argparse.Namespace(
+            task="hello",
+            set=[],
+            interactive=False,
+            output="quiet",
+            tool_budget=60,
+            timeout=1800,
+            thinking="off",
+            config=None,
+            profile=None,
+        )
         for outcome, expected in [("error", 3), ("needs_human", 2), ("done", 0)]:
+
             def fake_pi(cmd, env, run_dir, renderer, _outcome=outcome):
                 self.evidence(stop="error" if outcome == "error" else "stop")
-                self.result(status="needs_human" if outcome == "needs_human" else "done",
-                            validation="skipped" if outcome == "needs_human" else "passed",
-                            run_id=env["AGENT_RUN_ID"])
+                self.result(
+                    status="needs_human" if outcome == "needs_human" else "done",
+                    validation="skipped" if outcome == "needs_human" else "passed",
+                    run_id=env["AGENT_RUN_ID"],
+                )
                 self.assertIn("--no-extensions", cmd)
                 self.assertEqual(json.loads(env["AGENT_SCRIPTS_JSON"]), ["hello"])
                 return 0
+
             with self.subTest(outcome=outcome), contextlib.ExitStack() as stack:
                 stack.enter_context(patch.object(launcher, "REPO_ROOT", self.root))
                 stack.enter_context(patch.object(launcher, "find_pi", return_value=("node", "pi")))
-                stack.enter_context(patch.object(launcher.envguard, "load_env_file", return_value={}))
+                stack.enter_context(
+                    patch.object(launcher.envguard, "load_env_file", return_value={})
+                )
                 stack.enter_context(patch.object(assembly, "load_skill", return_value=spec))
                 stack.enter_context(patch.object(assembly, "make_run_dir", return_value=self.run))
                 stack.enter_context(patch.object(assembly, "preflight"))

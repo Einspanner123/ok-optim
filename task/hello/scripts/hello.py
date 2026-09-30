@@ -15,12 +15,8 @@ from pathlib import Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="hello 冒烟脚本: 输出环境注入快照"
-    )
-    parser.add_argument(
-        "--json", action="store_true", help="输出机器可读 JSON（默认人类可读）"
-    )
+    parser = argparse.ArgumentParser(description="hello 冒烟脚本: 输出环境注入快照")
+    parser.add_argument("--json", action="store_true", help="输出机器可读 JSON（默认人类可读）")
     parser.add_argument("--echo", default=None, help="回显任意文本（验证参数透传）")
     args = parser.parse_args()
 
@@ -48,9 +44,12 @@ def main() -> int:
         if run_dir != raw_run_dir or not run_dir.is_dir():
             raise ValueError("invalid run directory")
         result = {
-            "version": 1, "run_id": os.environ["AGENT_RUN_ID"],
-            "task": "hello", "slug": os.environ["AGENT_SLUG"],
-            "status": "done", "validation_status": "passed",
+            "version": 1,
+            "run_id": os.environ["AGENT_RUN_ID"],
+            "task": "hello",
+            "slug": os.environ["AGENT_SLUG"],
+            "status": "done",
+            "validation_status": "passed",
             "checks": [{"name": "hello_script", "status": "passed"}],
             "reason": "hello script completed and produced its environment snapshot",
         }

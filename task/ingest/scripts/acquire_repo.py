@@ -25,9 +25,11 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from _state import _stdio_json, workdir
 from _net import gh_api, http_get, http_get_stream, load_dotenv
+from _state import _stdio_json, workdir
+
 from hubkit.schema import CODE_EXTS
+
 
 class AcquisitionDeadlineExceeded(BaseException):
     """Stop a repository acquisition after its total wall-clock budget."""
@@ -37,8 +39,19 @@ def _deadline_expired(signum: int, frame: object) -> None:
     raise AcquisitionDeadlineExceeded
 
 
-WEIGHT_EXTS = {".pt", ".pth", ".ckpt", ".bin", ".onnx", ".safetensors",
-               ".h5ad", ".h5", ".npz", ".npy", ".loom"}
+WEIGHT_EXTS = {
+    ".pt",
+    ".pth",
+    ".ckpt",
+    ".bin",
+    ".onnx",
+    ".safetensors",
+    ".h5ad",
+    ".h5",
+    ".npz",
+    ".npy",
+    ".loom",
+}
 WEIGHT_DIRS = {"data", "weights", "checkpoints", "datasets", "figures"}
 SIZE_LIMIT = 2 * 1024 * 1024
 
@@ -75,17 +88,33 @@ def _copy_filtered(src_root: Path, dst_root: Path) -> tuple[int, list[str]]:
 def _run_git(args: list[str], **kw) -> subprocess.CompletedProcess:
     """git 不支持应用层回退：先直连（剥离代理 env），失败再带代理重试一次。"""
     import os
+
     env = dict(os.environ)
     try:
-        stripped = {k: v for k, v in env.items()
-                    if k.lower() not in ("all_proxy", "http_proxy", "https_proxy")}
-        return subprocess.run(args, env=stripped, check=True,
-                              capture_output=True, timeout=60, **kw)
+        stripped = {
+            k: v
+            for k, v in env.items()
+            if k.lower() not in ("all_proxy", "http_proxy", "https_proxy")
+        }
+        return subprocess.run(  # noqa: S603 - argv 内部构造
+            args,
+            env=stripped,
+            check=True,
+            capture_output=True,
+            timeout=60,
+            **kw,
+        )
     except subprocess.CalledProcessError:
         if not any(k.lower() in ("all_proxy", "https_proxy") for k in env):
             raise
-        return subprocess.run(args, env=env, check=True,
-                              capture_output=True, timeout=60, **kw)
+        return subprocess.run(  # noqa: S603 - argv 内部构造
+            args,
+            env=env,
+            check=True,
+            capture_output=True,
+            timeout=60,
+            **kw,
+        )
 
 
 def _github_archive(repo_url: str, repo_dir: Path) -> dict:
@@ -116,9 +145,12 @@ def _github_archive(repo_url: str, repo_dir: Path) -> dict:
             raise ValueError("GitHub archive contains too many files")
         for info in files:
             parts = info.filename.split("/")
-            if (info.is_dir() or len(parts) < 2 or
-                    any(part in ("", ".", "..") or "\\" in part for part in parts) or
-                    info.external_attr >> 16 & 0o170000 == 0o120000):
+            if (
+                info.is_dir()
+                or len(parts) < 2
+                or any(part in ("", ".", "..") or "\\" in part for part in parts)
+                or info.external_attr >> 16 & 0o170000 == 0o120000
+            ):
                 continue
             rel = Path(*parts[1:])
             total += info.file_size
@@ -131,8 +163,13 @@ def _github_archive(repo_url: str, repo_dir: Path) -> dict:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(archive.read(info))
             kept += 1
-    return {"channel": "github_archive", "commit": commit, "files": kept,
-            "dropped": dropped[:20], "submodules_needs_review": False}
+    return {
+        "channel": "github_archive",
+        "commit": commit,
+        "files": kept,
+        "dropped": dropped[:20],
+        "submodules_needs_review": False,
+    }
 
 
 def _github(repo_url: str, repo_dir: Path) -> dict:
@@ -143,19 +180,24 @@ def _github(repo_url: str, repo_dir: Path) -> dict:
             _run_git(["git", "clone", "--depth", "1", "--quiet", repo_url, str(clone_dir)])
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return _github_archive(repo_url, repo_dir)
-        head = _run_git(["git", "-C", str(clone_dir),
-                         "rev-parse", "HEAD"]).stdout.decode().strip()
+        head = _run_git(["git", "-C", str(clone_dir), "rev-parse", "HEAD"]).stdout.decode().strip()
         if not re.fullmatch(r"[0-9a-f]{40}", head):
             raise ValueError(f"commit 非法: {head!r}")
         needs_review = False
         if (clone_dir / ".gitmodules").is_file():
-            r = _run_git(["git", "-C", str(clone_dir), "submodule", "update",
-                          "--init", "--recursive"])
+            r = _run_git(
+                ["git", "-C", str(clone_dir), "submodule", "update", "--init", "--recursive"]
+            )
             needs_review = r.returncode != 0
         shutil.rmtree(clone_dir / ".git", ignore_errors=True)
         kept, dropped = _copy_filtered(clone_dir, repo_dir)
-        return {"channel": "github", "commit": head, "files": kept,
-                "dropped": dropped[:20], "submodules_needs_review": needs_review}
+        return {
+            "channel": "github",
+            "commit": head,
+            "files": kept,
+            "dropped": dropped[:20],
+            "submodules_needs_review": needs_review,
+        }
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -165,7 +207,7 @@ def _huggingface(repo_url: str, repo_dir: Path) -> dict:
     if not m:
         raise ValueError(f"非 HF 仓库 URL: {repo_url!r}")
     repo_id = m.group(1)
-    mirror = f"https://hf-mirror.com"
+    mirror = "https://hf-mirror.com"
     api = http_get(f"{mirror}/api/models/{repo_id}")
     api.raise_for_status()
     siblings = [s["rfilename"] for s in api.json().get("siblings", [])]
@@ -184,25 +226,46 @@ def _huggingface(repo_url: str, repo_dir: Path) -> dict:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
         kept += 1
-    return {"channel": "huggingface", "commit": "unavailable", "files": kept,
-            "dropped": dropped[:20], "mirror": mirror}
+    return {
+        "channel": "huggingface",
+        "commit": "unavailable",
+        "files": kept,
+        "dropped": dropped[:20],
+        "mirror": mirror,
+    }
 
 
 def _sdist(package: str, repo_dir: Path) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="sdist-"))
     try:
-        subprocess.run(
-            ["pip", "download", "--no-deps", "--no-binary", ":all:",
-             "--no-build-isolation", "-d", str(tmp), package],
-            check=True, capture_output=True, timeout=60)
-        archive = next(tmp.glob("*.tar.gz")) if list(tmp.glob("*.tar.gz")) \
-            else next(tmp.iterdir())
+        subprocess.run(  # noqa: S603
+            [  # noqa: S607 - pip 走 PATH
+                "pip",
+                "download",
+                "--no-deps",
+                "--no-binary",
+                ":all:",
+                "--no-build-isolation",
+                "-d",
+                str(tmp),
+                package,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        archive = next(tmp.glob("*.tar.gz")) if list(tmp.glob("*.tar.gz")) else next(tmp.iterdir())
         extract = tmp / "x"
         shutil.unpack_archive(archive, extract)
         inner = next(p for p in extract.iterdir() if p.is_dir())
         kept, dropped = _copy_filtered(inner, repo_dir)
-        return {"channel": "sdist", "commit": "unavailable", "files": kept,
-                "dropped": dropped[:20], "package": package}
+        return {
+            "channel": "sdist",
+            "commit": "unavailable",
+            "files": kept,
+            "dropped": dropped[:20],
+            "package": package,
+        }
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -219,7 +282,9 @@ def main() -> int:
         if repo_dir.is_dir() and not repo_dir.is_symlink() and not any(repo_dir.iterdir()):
             repo_dir.rmdir()  # A failed prior acquisition left only an empty placeholder.
         else:
-            print("needs_human: repo/ already contains data; review before retrying", file=sys.stderr)
+            print(
+                "needs_human: repo/ already contains data; review before retrying", file=sys.stderr
+            )
             return 2
     repo_dir.mkdir(parents=True)
 
@@ -227,7 +292,7 @@ def main() -> int:
     signal.setitimer(signal.ITIMER_REAL, 180.0)
     try:
         if args.repo_url.startswith("pypi:"):
-            result = _sdist(args.repo_url[len("pypi:"):], repo_dir)
+            result = _sdist(args.repo_url[len("pypi:") :], repo_dir)
         elif "huggingface.co" in args.repo_url:
             result = _huggingface(args.repo_url, repo_dir)
         elif "github.com" in args.repo_url:
@@ -237,13 +302,15 @@ def main() -> int:
             return 3
     except AcquisitionDeadlineExceeded:
         shutil.rmtree(repo_dir, ignore_errors=True)
-        print("needs_human: repo_needs_review (acquisition exceeded 180 seconds)",
-              file=sys.stderr)
+        print("needs_human: repo_needs_review (acquisition exceeded 180 seconds)", file=sys.stderr)
         return 2
     except subprocess.CalledProcessError as exc:
         shutil.rmtree(repo_dir, ignore_errors=True)
-        print(f"needs_human: repo_needs_review（clone/子模块失败）: "
-              f"{(exc.stderr or b'').decode()[:200]}", file=sys.stderr)
+        print(
+            f"needs_human: repo_needs_review（clone/子模块失败）: "
+            f"{(exc.stderr or b'').decode()[:200]}",
+            file=sys.stderr,
+        )
         return 2
     except Exception as exc:
         shutil.rmtree(repo_dir, ignore_errors=True)

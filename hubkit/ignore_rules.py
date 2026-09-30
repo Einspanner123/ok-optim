@@ -28,8 +28,7 @@ def is_code_file(path: Path) -> bool:
     return path.suffix.lower() in CODE_EXTS and path.stat().st_size < CODE_SIZE_LIMIT
 
 
-def find_ignored_code_files(hub: Path, name: str,
-                            spec: pathspec.GitIgnoreSpec) -> list[Path]:
+def find_ignored_code_files(hub: Path, name: str, spec: pathspec.GitIgnoreSpec) -> list[Path]:
     """返回 <Name>/repo/ 内会被忽略规则吞掉的代码相关文件（hub 根相对路径）。"""
     repo = hub / ENTRIES_ROOT / name / "repo"
     if not repo.is_dir():
@@ -47,6 +46,7 @@ def find_ignored_code_files(hub: Path, name: str,
 def snapshot_exception(hub: Path, name: str, snapshot: Path) -> str:
     """Use the same code-file predicate and ignore semantics for candidate snapshots."""
     from hubkit.schema import entry_path
+
     spec = load_ignore_spec(hub)
     if spec is None:
         return ""

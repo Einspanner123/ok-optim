@@ -15,7 +15,6 @@ import os
 import platform
 import shutil
 import subprocess
-import sys
 import tarfile
 import urllib.request
 from pathlib import Path
@@ -66,9 +65,7 @@ def pi_runtime() -> tuple[str, str]:
     """返回 [node, cli.js]；未安装则给出可执行指引。"""
     if node_bin().is_file() and pi_entry().is_file():
         return str(node_bin()), str(pi_entry())
-    raise SystemExit(
-        "pi runtime 未安装。先执行: uv run ok setup"
-    )
+    raise SystemExit("pi runtime 未安装。先执行: uv run ok setup")
 
 
 def ensure_node() -> Path:
@@ -80,7 +77,7 @@ def ensure_node() -> Path:
     tarball = VENDOR_DIR / f"node-{NODE_VERSION}-linux-{arch}.tar.gz"
     VENDOR_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[setup] 下载 node {NODE_VERSION} ({arch}) ...")
-    urllib.request.urlretrieve(url, tarball)
+    urllib.request.urlretrieve(url, tarball)  # noqa: S310 - URL 来自内置常量表
     digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
     if digest != NODE_SHA256[arch]:
         tarball.unlink()
@@ -90,7 +87,7 @@ def ensure_node() -> Path:
     print(f"[setup] sha256 校验通过: {digest[:16]}...")
     print("[setup] 解压 ...")
     with tarfile.open(tarball) as tf:
-        tf.extractall(VENDOR_DIR, filter="data")  # noqa: S202 - 受控目录
+        tf.extractall(VENDOR_DIR, filter="data")
     tarball.unlink()
     if not node_bin().is_file():
         raise SystemExit(f"node 解压异常，缺少 {node_bin()}")
@@ -100,21 +97,32 @@ def ensure_node() -> Path:
 def npm_ci(node: Path) -> None:
     npm_cli = node_dir() / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"
     has_lock = (VENDOR_DIR / "package-lock.json").is_file()
-    cmd = [str(node), str(npm_cli), "ci" if has_lock else "install",
-           "--ignore-scripts", "--no-audit", "--no-fund",
-           "--registry", "https://registry.npmmirror.com"]
+    cmd = [
+        str(node),
+        str(npm_cli),
+        "ci" if has_lock else "install",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--registry",
+        "https://registry.npmmirror.com",
+    ]
     print(f"[setup] npm {'ci' if has_lock else 'install（首次生成 package-lock.json）'} ...")
     env = dict(os.environ)
     env["PATH"] = f"{node_dir() / 'bin'}:{env.get('PATH', '')}"  # npm 子进程 shebang 需要
-    subprocess.run(cmd, cwd=str(VENDOR_DIR), check=True, env=env)
+    subprocess.run(  # noqa: S603 - argv 由本模块常量构造
+        cmd, cwd=str(VENDOR_DIR), check=True, env=env
+    )
 
 
 def verify(node: Path) -> None:
     if not pi_entry().is_file():
         raise SystemExit(f"pi 未装上，缺少 {pi_entry()}")
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603 - 固定 argv
         [str(node), str(pi_entry()), "--version"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     version = result.stdout.strip()
     if version != PI_VERSION:

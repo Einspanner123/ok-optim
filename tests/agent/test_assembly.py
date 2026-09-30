@@ -8,7 +8,6 @@ import pytest
 from agent import assembly
 from agent.assembly import PreflightError
 
-
 VALID_SKILL_YAML = """\
 name: fake
 description: fake task
@@ -62,8 +61,7 @@ class TestPreflight:
 class TestDecodeParams:
     def test_defaults_when_unset(self):
         sampling, max_tokens = assembly.decode_params({})
-        assert sampling == {"temperature": 0.4, "top_p": 0.95,
-                            "frequency_penalty": 0.3}
+        assert sampling == {"temperature": 0.4, "top_p": 0.95, "frequency_penalty": 0.3}
         assert max_tokens == 16384
 
     def test_empty_string_falls_back_to_default(self):
@@ -72,7 +70,8 @@ class TestDecodeParams:
 
     def test_core_override(self):
         sampling, max_tokens = assembly.decode_params(
-            {"DECODE_TEMPERATURE": "0.2", "DECODE_MAX_TOKENS": "4096"})
+            {"DECODE_TEMPERATURE": "0.2", "DECODE_MAX_TOKENS": "4096"}
+        )
         assert sampling["temperature"] == 0.2
         assert max_tokens == 4096
 
@@ -81,9 +80,15 @@ class TestDecodeParams:
         assert "seed" not in sampling and "top_k" not in sampling
 
     def test_optional_included_when_set(self):
-        sampling, _ = assembly.decode_params({
-            "DECODE_SEED": "42", "DECODE_TOP_K": "50", "DECODE_MIN_P": "0.05",
-            "DECODE_PRESENCE_PENALTY": "0.1", "DECODE_REPETITION_PENALTY": "1.05"})
+        sampling, _ = assembly.decode_params(
+            {
+                "DECODE_SEED": "42",
+                "DECODE_TOP_K": "50",
+                "DECODE_MIN_P": "0.05",
+                "DECODE_PRESENCE_PENALTY": "0.1",
+                "DECODE_REPETITION_PENALTY": "1.05",
+            }
+        )
         assert sampling["seed"] == 42
         assert sampling["top_k"] == 50
         assert sampling["min_p"] == 0.05
@@ -141,8 +146,7 @@ class TestDecodeParams:
 
 
 class TestRenderModelsJson:
-    ENV = {"OPENAI_BASE_URL": "http://ep/v1/", "OPENAI_API_KEY": "k",
-           "AGENT_LLM_MODEL": "m1"}
+    ENV = {"OPENAI_BASE_URL": "http://ep/v1/", "OPENAI_API_KEY": "k", "AGENT_LLM_MODEL": "m1"}
 
     def test_renders_provider_with_sampling(self, tmp_path: Path, monkeypatch):
         monkeypatch.setattr(assembly, "REPO_ROOT", tmp_path)
@@ -200,6 +204,7 @@ class TestMisc:
 
 # ---- 辅助：把 tmp_path 注入以隔离 REPO_ROOT（不依赖源码内部实现） ----
 
+
 def _make_task(root: Path, name: str, yaml_text: str | None, *, with_skill_md: bool):
     d = root / "task" / name
     d.mkdir(parents=True)
@@ -211,11 +216,13 @@ def _make_task(root: Path, name: str, yaml_text: str | None, *, with_skill_md: b
 
 def _load_skill_from(root: Path, task: str):
     import unittest.mock as mock
+
     with mock.patch.object(assembly, "REPO_ROOT", root):
         return assembly.load_skill(task)
 
 
 def _preflight_from(root: Path, task: str, env: dict):
     import unittest.mock as mock
+
     with mock.patch.object(assembly, "REPO_ROOT", root):
         return assembly.preflight(task, env)

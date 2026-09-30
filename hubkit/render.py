@@ -12,8 +12,16 @@ import io
 import re
 
 from hubkit.readers import BULLET_RE, TABLE_ROW_RE
-from hubkit.schema import (COUNT_BADGE, REPO_KIND_AUTHOR, VENUE_STYLES, CSV_COLUMNS,
-                          OUTER_README, INNER_README, MODELS_CSV, GITIGNORE, entry_path)
+from hubkit.schema import (
+    CSV_COLUMNS,
+    GITIGNORE,
+    INNER_README,
+    MODELS_CSV,
+    OUTER_README,
+    REPO_KIND_AUTHOR,
+    VENUE_STYLES,
+    entry_path,
+)
 
 FRAMEWORK_SHORT = {"PyTorch/Hugging Face": "PyTorch / HF"}
 
@@ -51,17 +59,21 @@ def render_model_readme(name: str, row: dict, verdict: str, status_tail: str) ->
     """
     kind = repo_kind(verdict, row["repo_url"])
     commit = row["commit_hash"]
-    flc = (f"Framework/license: {row['framework']} / {row['license']}."
-           if commit == "unavailable"
-           else f"Framework/license/commit: {row['framework']} / {row['license']} / `{commit}`")
+    flc = (
+        f"Framework/license: {row['framework']} / {row['license']}."
+        if commit == "unavailable"
+        else f"Framework/license/commit: {row['framework']} / {row['license']} / `{commit}`"
+    )
     lines = [
         f"# {name}",
         "",
         f"- Paper: [{row['paper_title']}]({row['paper_url']}) ({row['venue']}, {row['year']})",
         f"- Paper PDF: `paper/{name}.pdf`",
         f"- {kind} repository: {row['repo_url']}",
-        (f"- Verification: the repository is {kind.lower()} per the paper's code availability "
-         f"statement and metadata cross-check; license is {row['license']}."),
+        (
+            f"- Verification: the repository is {kind.lower()} per the paper's code availability "
+            f"statement and metadata cross-check; license is {row['license']}."
+        ),
         f"- {flc}",
         f"- Status: PDF downloaded; {status_tail}",
         "",
@@ -86,23 +98,31 @@ def render_bullet(row: dict, local_prefix: str) -> str:
     name = row["model_name"]
     style = venue_style(row["venue"])
     short, color, year = style["short"], style["color"], row["year"]
-    venue_badge = (f"[![{short} {year}]"
-                   f"(https://img.shields.io/badge/%F0%9F%93%84-"
-                   f"{short.replace(' ', '%20')}%20{year}-{color})]({row['paper_url']})")
+    venue_badge = (
+        f"[![{short} {year}]"
+        f"(https://img.shields.io/badge/%F0%9F%93%84-"
+        f"{short.replace(' ', '%20')}%20{year}-{color})]({row['paper_url']})"
+    )
     if "huggingface.co" in row["repo_url"]:
-        repo_badge = (f"[![Model](https://img.shields.io/badge/"
-                      f"%F0%9F%A4%97-Model-FFD21E)]({row['repo_url']})")
+        repo_badge = (
+            f"[![Model](https://img.shields.io/badge/%F0%9F%A4%97-Model-FFD21E)]({row['repo_url']})"
+        )
         stars_badge = ""
     else:
-        repo_badge = (f"[![code](https://img.shields.io/badge/"
-                      f"code-2ea44f?logo=github)]({row['repo_url']})")
+        repo_badge = (
+            f"[![code](https://img.shields.io/badge/code-2ea44f?logo=github)]({row['repo_url']})"
+        )
         stars_badge = ""
         if row["github_stars"]:
             owner_repo = re.sub(r"^https?://github\.com/", "", row["repo_url"]).rstrip("/")
-            stars_badge = (f"[![Stars](https://img.shields.io/github/stars/"
-                           f"{owner_repo}?style=flat&label=Stars)]({row['repo_url']})")
-    local_badge = (f"[![Local](https://img.shields.io/badge/"
-                   f"folder-%F0%9F%93%81-f0f0f0)](./{local_prefix}{name}/)")
+            stars_badge = (
+                f"[![Stars](https://img.shields.io/github/stars/"
+                f"{owner_repo}?style=flat&label=Stars)]({row['repo_url']})"
+            )
+    local_badge = (
+        f"[![Local](https://img.shields.io/badge/"
+        f"folder-%F0%9F%93%81-f0f0f0)](./{local_prefix}{name}/)"
+    )
     badges = " ".join(b for b in (venue_badge, repo_badge, stars_badge, local_badge) if b)
     return f"* **({name}) {row['paper_title']}**\n  {badges}\n"
 
@@ -123,7 +143,7 @@ def splice_readme(text: str, bullet: str, table_row: str) -> str:
     """向 README 文本追加一个条目：bullet 块（标题行+徽章行）加在条目列表末尾，
     表行加在对比表末尾；条目数徽章 +1。纯文本操作，供 apply 落位与临时拼接预检共用。"""
     lines = text.splitlines(keepends=True)
-    last_bullet = last_row = badge_at = badge_n = None
+    last_bullet = last_row = badge_at = None
     for i, line in enumerate(lines):
         if BULLET_RE.match(line):
             last_bullet = i
@@ -131,7 +151,7 @@ def splice_readme(text: str, bullet: str, table_row: str) -> str:
             last_row = i
         m = re.search(r"badge/Models-(\d+)-brightgreen", line)
         if m:
-            badge_at, badge_n = i, int(m[1])
+            badge_at = i
     if last_bullet is None or last_row is None or badge_at is None:
         raise ContractError("README 结构异常：缺少 bullet 列表 / 对比表 / 条目数徽章")
     # bullet 是两行块（标题 + 缩进徽章行），插入在最后一个条目的徽章行之后
@@ -141,8 +161,11 @@ def splice_readme(text: str, bullet: str, table_row: str) -> str:
         last_row += 1
     lines.insert(last_row + 1, table_row)
     out = "".join(lines)
-    return re.sub(r"badge/Models-(\d+)-brightgreen",
-                  lambda m: f"badge/Models-{int(m[1]) + 1}-brightgreen", out)
+    return re.sub(
+        r"badge/Models-(\d+)-brightgreen",
+        lambda m: f"badge/Models-{int(m[1]) + 1}-brightgreen",
+        out,
+    )
 
 
 def upsert_readme(text: str, name: str, bullet: str, table_row: str) -> str:
@@ -154,13 +177,16 @@ def upsert_readme(text: str, name: str, bullet: str, table_row: str) -> str:
         return splice_readme(text, bullet, table_row)
     if len(bullets) != 1 or len(tables) != 1:
         raise ContractError(f"README 条目不唯一或镜像不完整: {name}")
-    for start, count, value in sorted([(bullets[0], 2, bullet), (tables[0], 1, table_row)], reverse=True):
-        lines[start:start + count] = value.splitlines(keepends=True)
+    for start, count, value in sorted(
+        [(bullets[0], 2, bullet), (tables[0], 1, table_row)], reverse=True
+    ):
+        lines[start : start + count] = value.splitlines(keepends=True)
     return "".join(lines)
 
 
-def entry_files(row: dict, verdict: str, status: str, rows: list[dict],
-                indexes: dict[str, str], exception: str) -> dict[str, str]:
+def entry_files(
+    row: dict, verdict: str, status: str, rows: list[dict], indexes: dict[str, str], exception: str
+) -> dict[str, str]:
     """Pure rendering: hub fields in, complete prospective file contents out."""
     name = row["model_name"]
     model_path = entry_path(name)
@@ -181,9 +207,14 @@ def entry_files(row: dict, verdict: str, status: str, rows: list[dict],
     return {
         f"{model_path}/README.md": render_model_readme(name, row, verdict, status),
         MODELS_CSV: buf.getvalue(),
-        OUTER_README: upsert_readme(indexes[OUTER_README], name,
-                                  render_bullet(row, "single_cell_models/"), render_table_row(row)),
-        INNER_README: upsert_readme(indexes[INNER_README], name,
-                                  render_bullet(row, ""), render_table_row(row)),
+        OUTER_README: upsert_readme(
+            indexes[OUTER_README],
+            name,
+            render_bullet(row, "single_cell_models/"),
+            render_table_row(row),
+        ),
+        INNER_README: upsert_readme(
+            indexes[INNER_README], name, render_bullet(row, ""), render_table_row(row)
+        ),
         GITIGNORE: gitignore,
     }

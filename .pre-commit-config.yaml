@@ -1,0 +1,45 @@
+# 本地快速门禁：只跑「快且确定」的检查，重活留给 CI（见 .github/workflows/ci.yml）。
+#
+# 设计取舍：
+#   - 不用 pre-commit 官方 ruff/pyright mirror，改用 uvx 直接拉取，
+#     避免在 .pre-commit-config.yaml 里再维护一套版本号（与本项目 uv 管理一致）。
+#   - 排除 agent/vendor（第三方 pi runtime）与 single-cell-hub（20 个模型快照），
+#     它们不是我们的代码，检查它们只会制造噪音。
+#   - pyright 显式指向 .venv，保证 httpx/pypdf/ddgs/pathspec 能解析。
+exclude: ^(agent/vendor/|single-cell-hub/|runs/|\.venv/)
+
+repos:
+  - repo: local
+    hooks:
+      # 1) 语法/导入级快速失败：比 pyright 快一个数量级，先挡住低级错误。
+      - id: ruff-check
+        name: ruff (lint)
+        entry: uvx ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      # 2) 格式一致性。只改我们自己写的文件（exclude 已在顶层生效）。
+      - id: ruff-format
+        name: ruff (format)
+        entry: uvx ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+
+      # 3) 类型检查：P0 引入，挡住「模块属性不存在 / Optional 漏判」这类
+      #    pytest 只在运行时才偶然暴露的问题。
+      - id: pyright
+        name: pyright (types)
+        entry: bash -c 'export PATH="$PWD/agent/vendor/node-v22.23.2-linux-arm64/bin:$PATH"; uvx pyright --pythonpath "$PWD/.venv/bin/python" "$@"' --
+        language: system
+        pass_filenames: false
+        files: ^(agent|hubkit|task)/.*\.py$
+
+      # 4) 测试：显式只跑 tests/。裸 `pytest` 会去收集 single-cell-hub 里
+      #    第三方 repo 的测试并直接 collection error（曾导致 10 个错误中断）。
+      - id: pytest
+        name: pytest (tests/)
+        entry: .venv/bin/python -m pytest tests/ -q
+        language: system
+        pass_filenames: false
+        files: ^(agent|hubkit|task|tests)/.*\.py$

@@ -2,9 +2,12 @@
 
 Stateless: no ledger to reconcile — anomalies are hubkit validator findings.
 """
+
 import argparse
 import sys
+
 import _state as state
+
 from hubkit import readers, validators
 
 
@@ -12,12 +15,18 @@ def scan(model: str | None = None) -> dict:
     rows, error = readers.load_models_csv(state.HUB)
     rep = validators.Report()
     validators.validate(state.HUB, model, rep)
-    anomalies = [{"kind": "hub_contract", "key": e["model"], "detail": e["message"]} for e in rep.errors]
+    anomalies = [
+        {"kind": "hub_contract", "key": e["model"], "detail": e["message"]} for e in rep.errors
+    ]
     if error:
         return {"anomalies": anomalies, "error": error}
     rows = [r for r in rows if "__fields__" not in r]
-    return {"scanned_hub_rows": len(rows), "anomaly_count": len(anomalies),
-            "anomalies": anomalies, **({"model": model} if model else {})}
+    return {
+        "scanned_hub_rows": len(rows),
+        "anomaly_count": len(anomalies),
+        "anomalies": anomalies,
+        **({"model": model} if model else {}),
+    }
 
 
 def main() -> int:

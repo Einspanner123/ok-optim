@@ -21,7 +21,6 @@ from hubkit import ignore_rules, readers
 from hubkit.schema import (
     COMMIT_HASH_PLACEHOLDER,
     COMMIT_RE,
-    COUNT_BADGE,
     KEY_COLUMNS,
     PDF_MAGIC,
     PDF_MIN_BYTES,
@@ -56,8 +55,11 @@ def check_csv_schema(rows: list[dict], rep: Report) -> None:
     seen: dict[str, list[str]] = {k: [] for k in KEY_COLUMNS}
     for r in rows:
         if "__fields__" in r:  # readers 保留的列数异常行
-            rep.error(CHECK_CSV_SCHEMA, r["__fields__"][0] or f"line{r['__line__']}",
-                      f"第 {r['__line__']} 行列数 {len(r['__fields__'])} != 10")
+            rep.error(
+                CHECK_CSV_SCHEMA,
+                r["__fields__"][0] or f"line{r['__line__']}",
+                f"第 {r['__line__']} 行列数 {len(r['__fields__'])} != 10",
+            )
             continue
         name = r["model_name"]
         if not name:
@@ -69,9 +71,14 @@ def check_csv_schema(rows: list[dict], rep: Report) -> None:
                 rep.error(CHECK_CSV_SCHEMA, name, f"{col} 非法: {r[col]!r}")
         if r["github_stars"] and not r["github_stars"].isdigit():
             rep.error(CHECK_CSV_SCHEMA, name, f"github_stars 非法: {r['github_stars']!r}")
-        if not (COMMIT_RE.fullmatch(r["commit_hash"]) or r["commit_hash"] == COMMIT_HASH_PLACEHOLDER):
-            rep.error(CHECK_CSV_SCHEMA, name,
-                      f"commit_hash 必须为 40 位 hex 或 'unavailable': {r['commit_hash']!r}")
+        if not (
+            COMMIT_RE.fullmatch(r["commit_hash"]) or r["commit_hash"] == COMMIT_HASH_PLACEHOLDER
+        ):
+            rep.error(
+                CHECK_CSV_SCHEMA,
+                name,
+                f"commit_hash 必须为 40 位 hex 或 'unavailable': {r['commit_hash']!r}",
+            )
         if not r["framework"] or not r["license"]:
             rep.error(CHECK_CSV_SCHEMA, name, "framework/license 不得为空")
         for key in KEY_COLUMNS:
@@ -107,27 +114,38 @@ def check_model_entry(name: str, mdir: Path, row: dict, rep: Report) -> None:
         return
     if data["title"] != f"# {name}":
         rep.error(CHECK_README_CSV, name, f"标题应为 '# {name}': {data['title']!r}")
-    for field, col in (("paper_title", "paper_title"), ("paper_url", "paper_url"),
-                       ("year", "year")):
+    for field, col in (
+        ("paper_title", "paper_title"),
+        ("paper_url", "paper_url"),
+        ("year", "year"),
+    ):
         if field in data and data[field] != row[col]:
-            rep.error(CHECK_README_CSV, name,
-                      f"README {field}={data[field]!r} != CSV {row[col]!r}")
+            rep.error(CHECK_README_CSV, name, f"README {field}={data[field]!r} != CSV {row[col]!r}")
     if "paper_pdf" in data and data["paper_pdf"] != f"paper/{name}.pdf":
         rep.error(CHECK_README_CSV, name, f"Paper PDF 路径异常: {data['paper_pdf']!r}")
     if "venue" in data:
         if row["venue"] not in data["venue"]:
-            rep.error(CHECK_README_CSV, name,
-                      f"README venue {data['venue']!r} 不含 CSV venue {row['venue']!r}")
+            rep.error(
+                CHECK_README_CSV,
+                name,
+                f"README venue {data['venue']!r} 不含 CSV venue {row['venue']!r}",
+            )
     else:
         rep.error(CHECK_README_CSV, name, "缺少 Paper 行")
     if "repo_url" in data:
         if data["repo_url"] != row["repo_url"]:
-            rep.error(CHECK_README_CSV, name,
-                      f"README repo {data['repo_url']!r} != CSV {row['repo_url']!r}")
+            rep.error(
+                CHECK_README_CSV,
+                name,
+                f"README repo {data['repo_url']!r} != CSV {row['repo_url']!r}",
+            )
         is_hf = "huggingface.co" in row["repo_url"]
         if is_hf and data["repo_kind"] != "Author-maintained":
-            rep.error(CHECK_README_CSV, name,
-                      f"HF 仓库措辞必须为 Author-maintained: 实际 {data['repo_kind']}")
+            rep.error(
+                CHECK_README_CSV,
+                name,
+                f"HF 仓库措辞必须为 Author-maintained: 实际 {data['repo_kind']}",
+            )
     else:
         rep.error(CHECK_README_CSV, name, "缺少 repository 行")
     if "flc" in data:
@@ -136,27 +154,38 @@ def check_model_entry(name: str, mdir: Path, row: dict, rep: Report) -> None:
         if len(parts) == 3:
             fw, lic, commit = parts[0], parts[1], parts[2].strip("`")
             if not license_loose(fw, row["framework"]):
-                rep.error(CHECK_README_CSV, name,
-                          f"framework 语义不符: {fw!r} vs CSV {row['framework']!r}")
+                rep.error(
+                    CHECK_README_CSV,
+                    name,
+                    f"framework 语义不符: {fw!r} vs CSV {row['framework']!r}",
+                )
             if not license_loose(lic, row["license"]):
-                rep.error(CHECK_README_CSV, name,
-                          f"license 语义不符: {lic!r} vs CSV {row['license']!r}")
+                rep.error(
+                    CHECK_README_CSV, name, f"license 语义不符: {lic!r} vs CSV {row['license']!r}"
+                )
             if commit != row["commit_hash"]:
-                rep.error(CHECK_README_CSV, name,
-                          f"commit 不符: {commit!r} != CSV {row['commit_hash']!r}")
+                rep.error(
+                    CHECK_README_CSV, name, f"commit 不符: {commit!r} != CSV {row['commit_hash']!r}"
+                )
         elif len(parts) == 2:
             # 形态 b: `Framework/license: F / L` —— commit 融入 Status 叙述
             fw, lic = parts
             if not license_loose(fw, row["framework"]):
-                rep.error(CHECK_README_CSV, name,
-                          f"framework 语义不符: {fw!r} vs CSV {row['framework']!r}")
+                rep.error(
+                    CHECK_README_CSV,
+                    name,
+                    f"framework 语义不符: {fw!r} vs CSV {row['framework']!r}",
+                )
             if not license_loose(lic, row["license"]):
-                rep.error(CHECK_README_CSV, name,
-                          f"license 语义不符: {lic!r} vs CSV {row['license']!r}")
-            if row["commit_hash"] != COMMIT_HASH_PLACEHOLDER and \
-                    row["commit_hash"] not in data.get("status", ""):
-                rep.error(CHECK_README_CSV, name,
-                          "Framework/license 形态要求 Status 中含 commit hash")
+                rep.error(
+                    CHECK_README_CSV, name, f"license 语义不符: {lic!r} vs CSV {row['license']!r}"
+                )
+            if row["commit_hash"] != COMMIT_HASH_PLACEHOLDER and row["commit_hash"] not in data.get(
+                "status", ""
+            ):
+                rep.error(
+                    CHECK_README_CSV, name, "Framework/license 形态要求 Status 中含 commit hash"
+                )
         else:
             rep.error(CHECK_README_CSV, name, f"Framework/license 行格式异常: {flc!r}")
     else:
@@ -167,8 +196,9 @@ def check_model_entry(name: str, mdir: Path, row: dict, rep: Report) -> None:
     if py_count == 0:
         status = data.get("status", "")
         if not STATUS_NO_CODE_RE.search(status):
-            rep.error(CHECK_CODE_PRESENCE, name,
-                      f"repo 内无 .py，Status 必须说明原因: {status[:80]!r}")
+            rep.error(
+                CHECK_CODE_PRESENCE, name, f"repo 内无 .py，Status 必须说明原因: {status[:80]!r}"
+            )
 
     # ---- wording: 成句 + PDF downloaded ----
     ver = data.get("verification", "")
@@ -213,15 +243,17 @@ def check_readme_mirror(hub: Path, rows: list[dict], rep: Report) -> dict[str, l
     # 条目数徽章 = CSV 行数
     for tag, text in (("outer", outer), ("inner", inner)):
         if not text:
-            rep.error(CHECK_README_MIRROR, "-",
-                      f"{'外层' if tag == 'outer' else '内层'} README 缺失")
+            rep.error(
+                CHECK_README_MIRROR, "-", f"{'外层' if tag == 'outer' else '内层'} README 缺失"
+            )
             continue
         m = re.search(r"badge/Models-(\d+)-brightgreen", text)
         if not m:
             rep.error(CHECK_README_MIRROR, "-", f"{tag} README 缺少条目数徽章")
         elif int(m[1]) != len(names):
-            rep.error(CHECK_README_MIRROR, "-",
-                      f"{tag} README 徽章计数 {m[1]} != CSV 行数 {len(names)}")
+            rep.error(
+                CHECK_README_MIRROR, "-", f"{tag} README 徽章计数 {m[1]} != CSV 行数 {len(names)}"
+            )
 
     # bullet / 对比表名单与 CSV 一致
     for tag, text in (("outer", outer), ("inner", inner)):
@@ -242,14 +274,16 @@ def check_readme_mirror(hub: Path, rows: list[dict], rep: Report) -> dict[str, l
     outer_norm = outer.replace("./single_cell_models/", "./")
     outer_norm = re.sub(r"\]\(\./models\.csv/?\)", "](./models.csv)", outer_norm)
     if inner and outer_norm != inner:
-        n = sum(1 for a, b in zip(outer_norm.splitlines(), inner.splitlines()) if a != b)
-        rep.error(CHECK_README_MIRROR, "-",
-                  f"双 README 镜像不一致（归一化后仍有差异，起始 {n} 行不等）")
+        n = sum(
+            1 for a, b in zip(outer_norm.splitlines(), inner.splitlines(), strict=False) if a != b
+        )
+        rep.error(
+            CHECK_README_MIRROR, "-", f"双 README 镜像不一致（归一化后仍有差异，起始 {n} 行不等）"
+        )
     return result
 
 
-def check_orphans(hub: Path, rows: list[dict], outer_bullets: list[str],
-                  rep: Report) -> None:
+def check_orphans(hub: Path, rows: list[dict], outer_bullets: list[str], rep: Report) -> None:
     root = hub / "single_cell_models"
     dirs = {p.name for p in root.iterdir() if p.is_dir()} if root.is_dir() else set()
     names = {r["model_name"] for r in rows}

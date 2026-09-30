@@ -1,10 +1,10 @@
 import argparse
 import contextlib
 import io
-from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from agent import assembly, launcher
@@ -12,7 +12,11 @@ from agent import assembly, launcher
 
 class InteractionTests(unittest.TestCase):
     def test_tools_follow_effective_mode(self):
-        for requested, tty, expected in [(False, True, False), (True, True, True), (True, False, False)]:
+        for requested, tty, expected in [
+            (False, True, False),
+            (True, True, True),
+            (True, False, False),
+        ]:
             with self.subTest(requested=requested, tty=tty), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / "task/hello").mkdir(parents=True)
@@ -21,9 +25,17 @@ class InteractionTests(unittest.TestCase):
                 run = root / "run"
                 run.mkdir()
                 spec = assembly.SkillSpec("hello", "", [], [], {"hello": {"args": {}}})
-                args = argparse.Namespace(task="hello", set=[], interactive=requested,
-                                          output="quiet", tool_budget=60, timeout=1800,
-                                          thinking="off", config=None, profile=None)
+                args = argparse.Namespace(
+                    task="hello",
+                    set=[],
+                    interactive=requested,
+                    output="quiet",
+                    tool_budget=60,
+                    timeout=1800,
+                    thinking="off",
+                    config=None,
+                    profile=None,
+                )
                 stdout = io.StringIO()
                 stdout.isatty = lambda: tty
                 with contextlib.ExitStack() as stack:
@@ -46,8 +58,12 @@ class InteractionTests(unittest.TestCase):
                         (launcher.journal, "print_summary", None),
                     ]:
                         stack.enter_context(patch.object(obj, name, return_value=value))
-                    json_run = stack.enter_context(patch.object(launcher, "run_pi_json", return_value=0))
-                    tui_run = stack.enter_context(patch.object(launcher.subprocess, "call", return_value=0))
+                    json_run = stack.enter_context(
+                        patch.object(launcher, "run_pi_json", return_value=0)
+                    )
+                    tui_run = stack.enter_context(
+                        patch.object(launcher.subprocess, "call", return_value=0)
+                    )
                     self.assertEqual(launcher.cmd_run(args), 2)
                     active, inactive = (tui_run, json_run) if expected else (json_run, tui_run)
                     active.assert_called_once()
@@ -55,9 +71,11 @@ class InteractionTests(unittest.TestCase):
                     cmd = active.call_args.args[0]
                     env = active.call_args.kwargs["env"] if expected else active.call_args.args[1]
                     self.assertEqual(env["AGENT_INTERACTIVE"], "1" if expected else "0")
-                    self.assertEqual(cmd[cmd.index("--tools") + 1],
-                                     "read,bash,ask_user" if expected else "read,bash")
-                    extensions = [cmd[i+1] for i, v in enumerate(cmd) if v == "-e"]
+                    self.assertEqual(
+                        cmd[cmd.index("--tools") + 1],
+                        "read,bash,ask_user" if expected else "read,bash",
+                    )
+                    extensions = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-e"]
                     self.assertEqual(any(v.endswith("/ask-user.ts") for v in extensions), expected)
                     self.assertEqual("ask_user" in cmd[-1], expected)
                     if not expected:
