@@ -33,8 +33,9 @@ def digest(path: Path) -> str | None:
             if file.is_symlink():
                 raise IngestError(f"不接受符号链接: {file}")
             if file.is_file():
+                file_digest = digest(file)
                 h.update(file.relative_to(path).as_posix().encode())
-                h.update(digest(file).encode())
+                h.update((file_digest or "").encode())
     return h.hexdigest()
 
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pathspec
-import pathspec.patterns
 
 from hubkit.schema import CODE_EXTS, CODE_SIZE_LIMIT, ENTRIES_ROOT, GITIGNORE
 
@@ -20,7 +19,6 @@ def load_ignore_spec(hub: Path) -> pathspec.GitIgnoreSpec | None:
     if not gi.is_file():
         return None
     return pathspec.GitIgnoreSpec.from_lines(
-        pathspec.patterns.GitWildMatchPattern,
         gi.read_text(encoding="utf-8").splitlines(),
     )
 

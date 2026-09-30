@@ -45,7 +45,8 @@ def search_repos(query: str, limit: int) -> list[dict]:
             for it in resp.json().get("items", [])]
 
 
-def _norm(text: str) -> str:
+def _norm(text: str) -> list[str]:
+    """归一化为词元列表（小写、去标点）。"""
     return re.sub(r"[^a-z0-9 ]", " ", text.lower()).split()
 
 

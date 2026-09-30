@@ -151,7 +151,7 @@ def decode_audit(env: dict[str, str]) -> dict:
     return audit
 
 
-def decode_params(env: dict[str, str]) -> tuple[dict, int]:
+def decode_params(env: dict[str, str]) -> tuple[dict, object]:
     """从 env 快照解析解码参数（DECODE_*），带类型与范围校验。
 
     优先级：--set（进快照的 overrides）> .env > 父进程 > 代码默认值。

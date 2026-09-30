@@ -21,3 +21,16 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["agent", "hubkit"]
+
+[tool.pyright]
+include = ["agent", "hubkit", "task"]
+exclude = [
+    "agent/vendor",
+    "single-cell-hub",
+    ".venv",
+    "runs",
+]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+# 有意为之：代理/外部依赖的动态用法不强行收窄
+reportMissingModuleSource = "none"
