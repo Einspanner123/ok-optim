@@ -87,7 +87,9 @@ class TestResolveSlug:
 
 
 def _spec(required=None, optional=None):
-    return SimpleNamespace(required_env=required or [], optional_env=optional or [])
+    return SimpleNamespace(
+        required_env=required or [], optional_env=optional or [], read_dirs=[], read_files=[]
+    )
 
 
 class TestBuildPrompt:
@@ -436,6 +438,8 @@ def _profile_spec():
         required_env=["INGEST_MODE"],
         optional_env=["INGEST_APPLY_AUTHORIZED", "INGEST_MAX_NEW"],
         scripts={},
+        read_dirs=["task", "runs", "single-cell-hub", "docs"],
+        read_files=["AGENTS.md", "README.md"],
     )
 
 

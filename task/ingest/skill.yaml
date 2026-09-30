@@ -1,5 +1,7 @@
 name: ingest
 description: Discover, audit, stage, and apply single-cell paper entries
+read_dirs: [task, runs, single-cell-hub, docs]
+read_files: [AGENTS.md, README.md, pyproject.toml, main.py, .env.example, .python-version]
 required_env: [INGEST_MODE]
 optional_env:
   - INGEST_SEED_URL

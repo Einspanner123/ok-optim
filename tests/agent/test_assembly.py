@@ -11,6 +11,8 @@ from agent.assembly import PreflightError
 VALID_SKILL_YAML = """\
 name: fake
 description: fake task
+read_dirs: [task]
+read_files: [README.md]
 required_env: [NEEDED_KEY]
 optional_env: [OPT_KEY]
 """
@@ -33,6 +35,8 @@ class TestLoadSkill:
         assert spec.name == "fake"
         assert spec.required_env == ["NEEDED_KEY"]
         assert spec.optional_env == ["OPT_KEY"]
+        assert spec.read_dirs == ["task"]
+        assert spec.read_files == ["README.md"]
 
     def test_non_mapping_yaml_raises(self, tmp_path: Path):
         _make_task(tmp_path, "bad", "- just\n- a list\n", with_skill_md=True)

@@ -93,6 +93,83 @@ class TestFinalizeBranches:
         json.loads((tmp_path / "journal.json").read_text(encoding="utf-8"))
 
 
+def _write_complete_session(run_dir: Path, *, stop_reason: str = "stop"):
+    """非交互完整会话：events.jsonl + 同名 session 文件，走到 task_status 判定分支。
+
+    _write_events 只造 events.jsonl，会先在 audit_error（missing pi session file）
+    被拦下，触达不到"结果缺失"这条路径，因此兜底测试需要这个更完整的 fixture。
+    """
+    _write_events(run_dir, stop_reason=stop_reason)
+    session_id = "abc-123"
+    meta = {"type": "session", "id": session_id, "version": 3}
+    message = {
+        "type": "message",
+        "role": "assistant",
+        "stopReason": stop_reason,
+        "content": [],
+        "usage": {"input": 10, "output": 5, "totalTokens": 15},
+    }
+    (run_dir / f"2026-09-29T11-50-05-336Z_{session_id}.jsonl").write_text(
+        json.dumps(meta) + "\n" + json.dumps(message) + "\n", encoding="utf-8"
+    )
+
+
+class TestIncompleteFallback:
+    """会话正常结束但没有 task_result.json 时，journal 必须自己补一份。"""
+
+    def test_synthesizes_incomplete_result(self, tmp_path: Path):
+        _write_complete_session(tmp_path)
+        s = journal.finalize(tmp_path, "t", "s", 0, interactive=False, run_id="run-9")
+        assert s.status == "incomplete"
+        assert s.last_error == "task script did not publish task_result.json"
+        result = json.loads((tmp_path / "task_result.json").read_text(encoding="utf-8"))
+        assert result["status"] == "skipped_incomplete"
+        assert result["validation_status"] == "skipped"
+        assert result["run_id"] == "run-9"
+        assert result["task"] == "t" and result["slug"] == "s"
+        assert result["checks"] == [{"name": "task_result_published", "status": "skipped"}]
+        assert "task_result.json" in result["reason"]
+
+    def test_fallback_result_passes_own_validator(self, tmp_path: Path):
+        # 兜底产物必须能通过 _task_result 的校验，否则 journal 会变成 invalid_result
+        _write_complete_session(tmp_path)
+        s = journal.finalize(tmp_path, "t", "s", 0, interactive=False, run_id="run-9")
+        assert s.status == "incomplete"
+        assert s.task_status == "skipped_incomplete"
+        assert s.validation_status == "skipped"
+
+    def test_existing_result_is_not_overwritten(self, tmp_path: Path):
+        _write_complete_session(tmp_path)
+        (tmp_path / "task_result.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "run_id": "run-9",
+                    "task": "t",
+                    "slug": "s",
+                    "status": "skipped_incomplete",
+                    "validation_status": "skipped",
+                    "checks": [{"name": "x", "status": "skipped"}],
+                    "reason": "real",
+                }
+            ),
+            encoding="utf-8",
+        )
+        journal.finalize(tmp_path, "t", "s", 0, interactive=False, run_id="run-9")
+        result = json.loads((tmp_path / "task_result.json").read_text(encoding="utf-8"))
+        assert result["reason"] == "real"
+
+    def test_no_fallback_without_run_id(self, tmp_path: Path):
+        _write_complete_session(tmp_path)
+        journal.finalize(tmp_path, "t", "s", 0, interactive=False)
+        assert not (tmp_path / "task_result.json").exists()
+
+    def test_no_tmp_file_left_behind(self, tmp_path: Path):
+        _write_complete_session(tmp_path)
+        journal.finalize(tmp_path, "t", "s", 0, interactive=False, run_id="run-9")
+        assert not (tmp_path / "task_result.json.tmp").exists()
+
+
 class TestPrintSummary:
     def test_prints_status_and_usage(self, tmp_path: Path, capsys):
         _write_events(tmp_path, usage={"input": 10, "output": 5, "totalTokens": 15})

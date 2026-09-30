@@ -1,5 +1,7 @@
 name: hello
 description: Smoke-test environment injection, script execution, and run evidence
+read_dirs: [task, runs]
+read_files: [README.md]
 required_env: []
 optional_env:
   - FOO

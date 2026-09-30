@@ -29,10 +29,24 @@ class SkillSpec:
     required_env: list[str]
     optional_env: list[str]
     scripts: dict[str, dict]
+    read_dirs: list[str]
+    read_files: list[str]
 
 
 def task_dir(task: str) -> Path:
     return REPO_ROOT / "task" / task
+
+
+def _read_list(data: dict, key: str, path: Path) -> list[str]:
+    """读取可读路径声明。read_dirs 是安全边界，缺失即拒绝（fail-closed）。"""
+    if key not in data:
+        if key == "read_files":
+            return []
+        raise PreflightError(f"skill.yaml 缺少 {key}（bash/read 的可读目录，必须显式声明）: {path}")
+    value = data[key]
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise PreflightError(f"skill.yaml 的 {key} 应为字符串列表: {path}")
+    return list(value)
 
 
 def load_skill(task: str) -> SkillSpec:
@@ -48,6 +62,8 @@ def load_skill(task: str) -> SkillSpec:
         required_env=list(data.get("required_env") or []),
         optional_env=list(data.get("optional_env") or []),
         scripts=dict(data.get("scripts") or {}),
+        read_dirs=_read_list(data, "read_dirs", path),
+        read_files=_read_list(data, "read_files", path),
     )
 
 

@@ -106,6 +106,39 @@ def _evidence(run_dir: Path, summary: RunSummary) -> list[dict]:
     return messages
 
 
+def _write_incomplete_result(run_dir: Path, summary: RunSummary) -> None:
+    """Synthesize a result file when the session ended without one.
+
+    The task contract is "scripts publish task_result.json"; if no script ran to
+    completion there is nothing to publish. Rather than leaving the run in
+    `unknown`, write the honest outcome: the work did not reach a publishable
+    state. This keeps every run self-describing without depending on the model
+    remembering to emit a final artifact.
+    """
+    if not summary.run_id:
+        return
+    result = {
+        "version": 1,
+        "run_id": summary.run_id,
+        "task": summary.task,
+        "slug": summary.slug,
+        "status": "skipped_incomplete",
+        "validation_status": "skipped",
+        "checks": [{"name": "task_result_published", "status": "skipped"}],
+        "reason": (
+            "本次 run 未产出 task_result.json：会话结束时任务脚本未能发布结果。"
+            f"（{summary.last_error or 'no session result'}）"
+        ),
+        "tool_calls": summary.tool_calls,
+    }
+    path = run_dir / "task_result.json"
+    if path.exists():
+        return
+    temporary = run_dir / "task_result.json.tmp"
+    temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
 def _task_result(run_dir: Path, summary: RunSummary) -> None:
     path = run_dir / "task_result.json"
     if not path.exists():
@@ -204,6 +237,12 @@ def finalize(
     elif summary.task_status == "unknown":
         summary.status = "incomplete"
         summary.last_error = "task script did not publish task_result.json"
+        # 结果缺失时补一份 skipped_incomplete，让 run 自描述（不依赖模型自觉）
+        try:
+            _write_incomplete_result(run_dir, summary)
+            _task_result(run_dir, summary)
+        except (OSError, ValueError, TypeError):
+            pass
     elif summary.task_status in {"done", "done_with_warnings"} and summary.tool_calls == 0:
         summary.status = "incomplete"
         summary.last_error = "no task tool execution evidence"

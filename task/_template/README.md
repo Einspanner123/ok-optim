@@ -28,6 +28,6 @@ task/<name>/
 
 1. `cp -r task/_template task/<name>`
 2. 填 `skill.yaml`：`required_env` 经 assembly preflight 校验，缺失即拒绝启动
-3. 填 `SKILL.md` 六节（见模板内 TODO 标记），并同步 `SKILL_CN.md` 中文对照版
+3. 填 `SKILL.md` 各节（参见模板内 TODO 标记），并同步 `SKILL_CN.md` 中文对照版
 4. 每个脚本按 `scripts/_script.py` 骨架实现，并在 `skill.yaml` 的 `scripts:` 登记
    （path-guard 依据该清单拦截未声明脚本的 bash 调用）

@@ -24,7 +24,9 @@ class InteractionTests(unittest.TestCase):
                 (root / ".venv/bin/python").touch()
                 run = root / "run"
                 run.mkdir()
-                spec = assembly.SkillSpec("hello", "", [], [], {"hello": {"args": {}}})
+                spec = assembly.SkillSpec(
+                    "hello", "", [], [], {"hello": {"args": {}}}, ["task", "runs"], ["README.md"]
+                )
                 args = argparse.Namespace(
                     task="hello",
                     set=[],

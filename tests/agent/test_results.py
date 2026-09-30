@@ -169,7 +169,9 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(self.finish().status, "audit_error")
 
     def test_prompt_omits_provider_credentials(self):
-        spec = assembly.SkillSpec("hello", "", [], ["FOO", "SERVICE_TOKEN"], {})
+        spec = assembly.SkillSpec(
+            "hello", "", [], ["FOO", "SERVICE_TOKEN"], {}, ["task", "runs"], ["README.md"]
+        )
         prompt = launcher.build_prompt(
             "hello",
             spec,
@@ -218,7 +220,9 @@ class ResultTests(unittest.TestCase):
         # venv preflight 契约: launcher 要求 REPO_ROOT/.venv/bin/python 存在
         (self.root / ".venv/bin").mkdir(parents=True)
         (self.root / ".venv/bin/python").write_text("", encoding="utf-8")
-        spec = assembly.SkillSpec("hello", "", [], ["FOO"], {"hello": {"args": {}}})
+        spec = assembly.SkillSpec(
+            "hello", "", [], ["FOO"], {"hello": {"args": {}}}, ["task", "runs"], ["README.md"]
+        )
         args = argparse.Namespace(
             task="hello",
             set=[],
@@ -241,6 +245,10 @@ class ResultTests(unittest.TestCase):
                 )
                 self.assertIn("--no-extensions", cmd)
                 self.assertEqual(json.loads(env["AGENT_SCRIPTS_JSON"]), ["hello"])
+                self.assertEqual(json.loads(env["AGENT_READ_DIRS_JSON"]), ["task", "runs"])
+                self.assertEqual(json.loads(env["AGENT_READ_FILES_JSON"]), ["README.md"])
+                self.assertEqual(json.loads(env["AGENT_READ_DIRS_JSON"]), ["task", "runs"])
+                self.assertEqual(json.loads(env["AGENT_READ_FILES_JSON"]), ["README.md"])
                 return 0
 
             with self.subTest(outcome=outcome), contextlib.ExitStack() as stack:

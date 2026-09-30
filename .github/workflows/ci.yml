@@ -47,11 +47,12 @@ jobs:
       - name: Python tests
         run: uv run pytest tests/ -q
 
-      # 两个 .mjs 测试直接从 agent/vendor/node_modules 导入 pi runtime，
+      # tests/agent/*.mjs 直接从 agent/vendor/node_modules 导入 pi runtime，
       # 而 node_modules 是 gitignore 的（由 bootstrap 生成），
-      # 因此干净检出必须先装一次。
+      # 因此干净检出必须先装一次。（这里跑的是 setup-node 装的那个 node，
+      # 不是 bootstrap 下载的 vendored node——后者供 pi runtime 运行时用。）
       - name: Bootstrap pi runtime
         run: uv run python -m agent.bootstrap
 
       - name: Node tests
-        run: node --test tests/agent/test_guard.mjs tests/agent/test_policy.mjs tests/agent/test_interaction.mjs
+        run: node --test tests/agent/*.mjs

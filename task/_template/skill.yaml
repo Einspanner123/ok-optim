@@ -1,6 +1,11 @@
 name: <name>
 description: <one-sentence task objective>
 
+# bash/read 只允许访问这些路径（相对仓库根）。
+# read_dirs 是安全边界：缺失即拒绝启动（fail-closed），必须显式声明。
+read_dirs: [task, runs]
+read_files: [README.md]
+
 # Preflight rejects missing required environment variables.
 required_env: []
 optional_env: []

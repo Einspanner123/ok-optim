@@ -397,6 +397,7 @@ _PROFILE_FLAGS: dict = {
     "interactive": False,
     "output": "human",
     "tool_budget": 60,
+    "failure_limit": 3,
     "timeout": 1800,
     "thinking": "off",
 }
@@ -413,7 +414,7 @@ def _apply_profile_flags(args: argparse.Namespace, flags: dict) -> None:
             raise SystemExit(f"[config] output 非法: {value!r}")
         if key == "thinking" and value not in ("off", "minimal", "low", "medium", "high"):
             raise SystemExit(f"[config] thinking 非法: {value!r}")
-        if key in ("tool_budget", "timeout") and (
+        if key in ("tool_budget", "failure_limit", "timeout") and (
             isinstance(value, bool) or not isinstance(value, int)
         ):
             raise SystemExit(f"[config] {key} 必须为整数")
@@ -473,6 +474,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     agent_vars = {
         "AGENT_PROJECT_ROOT": str(REPO_ROOT),
         "AGENT_SCRIPTS_JSON": json.dumps(list(spec.scripts)),
+        "AGENT_READ_DIRS_JSON": json.dumps(spec.read_dirs),
+        "AGENT_READ_FILES_JSON": json.dumps(spec.read_files),
         "AGENT_SCRIPT_ENV_JSON": json.dumps(spec.required_env + spec.optional_env),
         "AGENT_RUN_ID": run_id,
         "AGENT_TASK": task,
@@ -480,6 +483,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "AGENT_RUN_DIR": str(run_dir),
         "AGENT_INTERACTIVE": "1" if interactive else "0",
         "AGENT_TOOL_BUDGET": str(args.tool_budget),
+        "AGENT_FAILURE_LIMIT": str(args.failure_limit),
         "PI_CODING_AGENT_DIR": str(agent_dir),
         # 禁直跑令牌: bootstrap-guard 校验，缺它 pi 拒绝启动
         "AGENT_INVOKED_BY_LAUNCHER": uuid.uuid4().hex,
@@ -634,6 +638,12 @@ def main() -> None:
         type=int,
         default=None,
         help="工具调用预算（budget-guard 机械护栏，超限强制收尾）",
+    )
+    p_run.add_argument(
+        "--failure-limit",
+        type=int,
+        default=None,
+        help="同一操作失败多少次后 budget-guard 拒绝重试（默认 3）",
     )
     p_run.add_argument(
         "--no-thinking",

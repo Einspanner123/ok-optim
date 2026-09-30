@@ -13,7 +13,8 @@ function fixture(fn) {
     for (const name of ["README.md", ".env", "task/hello/scripts/hello.py",
       "task/hello/scripts/undeclared.py"]) writeFileSync(join(root, name), "fixture");
     writeFileSync(join(root, ".venv/bin/python"), "fixture");
-    return fn({ root, task: "hello", scripts: ["hello"] });
+    return fn({ root, task: "hello", scripts: ["hello"],
+      readDirs: ["task", "runs"], readFiles: ["README.md"] });
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
@@ -21,7 +22,7 @@ for (const command of [
   "cat .env", "head -n 1 .env", "tail .env", "wc .env", "cat /etc/passwd",
   "echo $OPENAI_API_KEY", "echo safe & touch /tmp/no",
   "git diff --output=/tmp/no", "git show HEAD:.env", "cat README.md; pwd",
-  "echo $(pwd)", "echo `pwd`", "echo safe\npwd", "cat *", "tail -f README.md",
+  "echo $(pwd)", "echo `pwd`", "echo safe\npwd", "cat *", "echo x > /tmp/no",
   "uv run python task/hello/scripts/undeclared.py",
   "uv run python task/other/scripts/hello.py",
   "uv run python task/hello/scripts/../hello.py",
@@ -37,17 +38,55 @@ test("allows literal script arguments and uses prepared Python directly", () => 
 }));
 test("allows bounded file reads and root directory listing", () => fixture(p => {
   assert.equal(planCommand("cat README.md", p).args.at(-1), join(p.root, "README.md"));
-  assert.equal(planCommand("head -n 20 README.md", p).args[1], "20");
+  assert.equal(planCommand("head -n 20 README.md", p).args.includes("20"), true);
   assert.equal(planCommand("ls -la", p).args.at(-1), p.root);
+}));
+test("read-only options are not a security boundary", () => fixture(p => {
+  assert.equal(planCommand("ls -R task", p).args.at(-1), join(p.root, "task"));
+  assert.equal(planCommand("ls --color=auto task", p).args.at(-1), join(p.root, "task"));
+  assert.equal(planCommand("head -50 README.md", p).args.at(-1), join(p.root, "README.md"));
+  assert.equal(planCommand("wc -l README.md", p).args.at(-1), join(p.root, "README.md"));
+}));
+test("grep and find are allowed on readable paths", () => fixture(p => {
+  assert.equal(planCommand("grep -n hello README.md", p).args.at(-1), join(p.root, "README.md"));
+  assert.equal(planCommand("grep -C 5 hello README.md", p).args.at(-1), join(p.root, "README.md"));
+  assert.equal(planCommand("grep -20 hello README.md", p).args.at(-1), join(p.root, "README.md"));
+  assert.equal(planCommand("grep -C5 hello README.md", p).args.at(-1), join(p.root, "README.md"));
+  // find 的起始目录必须排在表达式之前（GNU find 语法），不再用 at(-1) 断言。
+  assert.deepEqual(planCommand("find task -name hello.py", p).args,
+    [join(p.root, "task"), "-name", "hello.py"]);
+  // grep 的第一个非选项参数是模式而不是路径；路径越界仍须拒绝。
+  assert.throws(() => planCommand("grep hello .env", p));
+}));
+test("grep pattern is not treated as a path", () => fixture(p => {
+  const args = planCommand("grep -n hello README.md", p).args;
+  assert.equal(args.includes(join(p.root, "hello")), false);
+  assert.equal(planCommand("grep github README.md", p).args.at(-1), join(p.root, "README.md"));
+}));
+test("grep with a count option keeps pattern and path apart", () => fixture(p => {
+  assert.equal(planCommand("grep -C 5 foo README.md", p).args.at(-1), join(p.root, "README.md"));
+  assert.equal(planCommand("grep -C5 foo README.md", p).args.at(-1), join(p.root, "README.md"));
+  // 模式以 - 开头时不会被当成选项（runs 里出现过的写法）
+  assert.equal(planCommand("grep -c foo README.md", p).args.at(-1), join(p.root, "README.md"));
+}));
+test("grep without a file is refused instead of silently reading nothing", () => fixture(p => {
+  // bash 子进程的 stdin 是 /dev/null，无文件的 grep 只可能返回"无匹配"，
+  // 正是本次要消除的静默假阴性类型。
+  assert.throws(() => planCommand("grep foo", p), /at least one file/);
+}));
+test("absolute paths outside readable roots are rejected", () => fixture(p => {
+  assert.throws(() => planCommand("cat /etc/passwd", p));
+  assert.throws(() => planCommand("ls -R /", p));
+  assert.throws(() => planCommand("find / -name passwd", p));
 }));
 test("path boundary does not accept a sibling prefix", () => fixture(p => {
   mkdirSync(join(p.root, "runs-secret"));
   writeFileSync(join(p.root, "runs-secret/key"), "dummy");
-  assert.equal(readAllowed(p.root, "runs-secret/key"), false);
+  assert.equal(readAllowed(p, "runs-secret/key"), false);
 }));
 test("rejects symlink escapes in read and command paths", () => fixture(p => {
   symlinkSync(join(p.root, ".env"), join(p.root, "runs/key"));
-  assert.equal(readAllowed(p.root, "runs/key"), false);
+  assert.equal(readAllowed(p, "runs/key"), false);
   assert.throws(() => planCommand("cat runs/key", p));
 }));
 test("rejects script symlinks", () => fixture(p => {
@@ -59,9 +98,9 @@ test("rejects script symlinks", () => fixture(p => {
 test("run workspace is readable but internal modules remain unexecutable", () => fixture(p => {
   mkdirSync(join(p.root, "runs/cache/pages"), { recursive: true });
   writeFileSync(join(p.root, "runs/cache/pages/page.html"), "ok");
-  assert.equal(readAllowed(p.root, "runs/cache/pages/page.html"), true);
+  assert.equal(readAllowed(p, "runs/cache/pages/page.html"), true);
   symlinkSync(join(p.root, ".env"), join(p.root, "runs/secret"));
-  assert.equal(readAllowed(p.root, "runs/secret"), false);
+  assert.equal(readAllowed(p, "runs/secret"), false);
   writeFileSync(join(p.root, "task/hello/scripts/_state.py"), "");
   assert.throws(() => planCommand("uv run python task/hello/scripts/_state.py", p));
   assert.throws(() => planCommand('python -c "import _state"', p));
