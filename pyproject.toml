@@ -15,6 +15,13 @@ dependencies = [
 [project.scripts]
 ok = "agent.launcher:main"
 
+[dependency-groups]
+# 测试依赖。CI 与本地统一用 `uv sync` 安装（含此组），
+# 避免再出现「测试只在某台机器的 venv 里能跑」的情况。
+dev = [
+    "pytest>=8.0",
+]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

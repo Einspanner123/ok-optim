@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# 同一分支的新 push 取消旧运行，省 CI 额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # single-cell-hub 是 20 个单细胞模型快照的子模块，体积巨大且与
+          # 本仓库代码无关。CI 不拉取它；本仓库只在运行时读它。
+          submodules: false
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff check)
+        run: uvx ruff check
+
+      - name: Format check (ruff format)
+        run: uvx ruff format --check
+
+      # pyright 需要 node 来跑；装上并指向项目 venv，
+      # 这样 httpx/pypdf/ddgs/pathspec 能解析，而不是被当成缺失导入。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Types (pyright)
+        run: uvx pyright --pythonpath .venv/bin/python agent hubkit task
+
+      # 只跑 tests/。裸 pytest 会去收集 single-cell-hub 里第三方 repo 的
+      # 测试并直接 collection error（本地实测 10 个错误中断）。
+      - name: Python tests
+        run: uv run pytest tests/ -q
+
+      - name: Node tests
+        run: node --test tests/agent/test_guard.mjs tests/agent/test_policy.mjs tests/agent/test_interaction.mjs
