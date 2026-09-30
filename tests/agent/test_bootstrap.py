@@ -7,7 +7,8 @@ import pytest
 
 from agent import bootstrap
 
-NODE_DIRNAME = f"node-{bootstrap.NODE_VERSION}-linux-arm64"
+# 目录名必须跟随运行架构：CI 是 x64，本机是 arm64。
+NODE_DIRNAME = f"node-{bootstrap.NODE_VERSION}-linux-{bootstrap._arch()}"
 
 
 def _make_tarball(tmp_path: Path, name: str) -> Path:
