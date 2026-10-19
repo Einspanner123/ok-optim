@@ -255,6 +255,104 @@ class IngestTests(unittest.TestCase):
             self.assertEqual(acquire_repo.main(), 0)
             self.assertEqual((repo / "main.py").read_text(), "new = 1\n")
 
+    def test_three_entries_clear_materials_and_keep_first_evidence(self):
+        trace = self.run / "events.jsonl"
+        self.run.mkdir(parents=True, exist_ok=True)
+        trace.write_text("first entry full trace\n")
+        session = self.run / "session.jsonl"
+        session.write_text("session evidence\n")
+        older = self.runs / "older" / "events.jsonl"
+        older.parent.mkdir()
+        older.write_text("older evidence\n")
+        archive = self.run / "first-applied"
+        archive_hash = None
+        with patch.dict(os.environ, {"INGEST_MAX_NEW": "3"}):
+            for i, name in enumerate(("First", "Second", "Third")):
+                self.materials()
+                pdf = self.run / "paper" / "paper.pdf"
+                pdf.write_bytes(b"%PDF" + bytes([65 + i]) * 60000)
+                (self.run / "repo" / "main.py").write_text(f"entry = {i}\n")
+                cache = self.run / "cache"
+                cache.mkdir()
+                (cache / "fulltext.txt").write_text(name)
+                http_cache = self.runs / ".cache" / "ingest"
+                http_cache.mkdir(parents=True, exist_ok=True)
+                (http_cache / "response.cache").write_text(name)
+                payload = self.payload(name)
+                payload["commit_hash"] = chr(98 + i) * 40
+                self.assertTrue(entry.stage(payload)["ok"])
+                result = entry.apply()
+                self.assertTrue(result["applied"])
+                self.assertTrue(result["workspace_cleanup"]["ok"])
+                for child in ("paper", "repo", "cache", "staged"):
+                    self.assertFalse((self.run / child).exists())
+                self.assertFalse(http_cache.exists())
+                self.assertEqual(
+                    (self.hub / entry_path(name) / "repo" / "main.py").read_text(),
+                    f"entry = {i}\n",
+                )
+                if i == 0:
+                    archive_hash = entry.digest(archive)
+                self.assertEqual(entry.digest(archive), archive_hash)
+            result = json.loads((self.run / "task_result.json").read_text())
+            self.assertEqual(result["status"], "done")
+            self.assertEqual(sum(item["applied"] for item in result["items"].values()), 3)
+        self.assertEqual((archive / "cache" / "fulltext.txt").read_text(), "First")
+        self.assertEqual((archive / "repo" / "main.py").read_text(), "entry = 0\n")
+        saved = json.loads((archive / "applied.json").read_text())
+        self.assertEqual(saved["model_name"], "First")
+        self.assertTrue(saved["applied"])
+        self.assertTrue((archive / "staged" / "summary.json").is_file())
+        self.assertEqual(trace.read_text(), "first entry full trace\n")
+        self.assertEqual(session.read_text(), "session evidence\n")
+        self.assertEqual(older.read_text(), "older evidence\n")
+
+    def test_failed_apply_keeps_materials_and_caches(self):
+        self.materials()
+        cache = self.run / "cache"
+        cache.mkdir()
+        (cache / "fulltext.txt").write_text("failure evidence")
+        http_cache = self.runs / ".cache" / "ingest"
+        http_cache.mkdir(parents=True)
+        (http_cache / "response.cache").write_text("response")
+        entry.stage(self.payload())
+        before = entry.digest(self.hub)
+        with patch.object(entry, "_ensure_validation_ok", side_effect=state.IngestError("bad")):
+            with self.assertRaises(state.IngestError):
+                entry.apply()
+        self.assertEqual(entry.digest(self.hub), before)
+        for child in ("paper", "repo", "cache", "staged"):
+            self.assertTrue((self.run / child).is_dir())
+        self.assertTrue(http_cache.is_dir())
+        self.assertFalse((self.run / "first-applied").exists())
+
+    def test_cleanup_error_preserves_applied_result(self):
+        self.materials()
+        entry.stage(self.payload())
+        with patch.object(entry, "_cleanup_after_apply", side_effect=OSError("cleanup failed")):
+            result = entry.apply()
+        self.assertTrue(result["applied"])
+        self.assertFalse(result["workspace_cleanup"]["ok"])
+        self.assertTrue(entry.check(self.hub, only="New")["ok"])
+        saved = json.loads((self.run / "task_result.json").read_text())
+        self.assertTrue(saved["items"]["New"]["applied"])
+        self.assertFalse(saved["items"]["New"]["workspace_cleanup"]["ok"])
+
+    def test_cleanup_rejects_cache_symlink_escape(self):
+        self.materials()
+        entry.stage(self.payload())
+        outside = self.root / "outside-cache"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("keep")
+        cache = self.runs / ".cache" / "ingest"
+        cache.parent.mkdir()
+        cache.symlink_to(outside, target_is_directory=True)
+        result = entry.apply()
+        self.assertTrue(result["applied"])
+        self.assertFalse(result["workspace_cleanup"]["ok"])
+        self.assertEqual((outside / "keep.txt").read_text(), "keep")
+        self.assertTrue((self.run / "repo").is_dir())
+
     def test_run_result_depends_on_actual_apply(self):
         self.materials()
         entry.stage(self.payload())

@@ -19,7 +19,8 @@ description: Discover or audit single-cell papers, acquire official sources, sta
 ## 工作区、状态与入口
 
 - 任务无状态：没有跨 run 的候选存储或台账。当前条目的一切产物都在 launcher 注入的 `AGENT_RUN_DIR` 运行目录下：`paper/`（下载的 PDF）、`repo/`（源码快照）、`cache/`（抽取全文）、`staged/`（已校验的待落位文件）。脚本结果汇总在同目录的 `ingest.json` 与 `task_result.json`。
-- `runs/.cache/ingest/` 下的 HTTP 缓存是纯内容寻址，无业务语义，跨 run 复用安全。不要把它当作持久任务状态。
+- 每次校验通过的成功落位之后，脚本会清空 `paper/`、`repo/`、`cache/`、`staged/` 与共享 HTTP 缓存 `runs/.cache/ingest/`。首个成功条目的材料与 `applied.json` 保留在 `first-applied/` 中。run 的事件日志、会话历史与结果文件继续可用。工作区随后即可处理下一篇论文。失败或 pending 的条目保留其证据。
+- 检查 apply 结果中的 `workspace_cleanup.ok`。若清理失败，条目其实已经落位：报告清理错误并停止，不要重复 apply，也不要开始处理下一篇论文。
 - 去重主键：归一化仓库地址 `owner/repo`（小写；取 GitHub 重定向后的 canonical 全名）。仓库地址变了即视为另一篇论文。`model_name` 与既有条目撞名是人工决策，绝不自动合并。
 - 一篇论文端到端处理完再扩大发现面。存在可 staged/落位的合格条目时，不要再收集新线索。
 - **查看脚本源码是允许的，但只能为解一个具体冲突而看。** 当结果与本文件契约冲突、某个选项含义不清、或 `needs_human` 原因含糊时，读脚本的 `--help` 或源码。不要把读源码当成运行脚本的替代，也不要为「熟悉一下」而连着读好几个脚本——那是本文件的职责。若在没有具体问题的情况下已经读到第三个脚本，停下，改跑文档化的 CLI。

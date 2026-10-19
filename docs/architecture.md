@@ -1076,7 +1076,16 @@ runs/.cache/ingest/              # HTTP 缓存（纯内容寻址，跨 run 复�
 
 `staged/` 布局：`staged/README.md`、`staged/.gitignore`、
 `staged/single_cell_models/{README.md,models.csv,<Name>/README.md}` 和 `summary.json`。
-PDF / repo 引用 run 目录材料，不额外保存长期副本。**旧版 staged 必须重新生成。**
+PDF and repository references point to the active run materials. After the first successful apply, the evidence is retained under `first-applied/`; later successful entries release their working materials. Old staged data must be regenerated.
+
+After a verified successful apply, the script first publishes the applied result.
+It retains the first successful entry's `paper/`, `repo/`, `cache/`, `staged/`, and
+`applied.json` under `first-applied/`, then clears the active entry directories and
+`runs/.cache/ingest/`. Later successful entries retain their hub files and result
+records without another material archive. The run's `events.jsonl`, pi session,
+journal, and result files are preserved, so the first entry's full trajectory and
+verified success remain inspectable. Failed or pending entries keep their materials.
+Cleanup failures are reported separately from a successful hub application.
 
 #### 脚本职责要点
 

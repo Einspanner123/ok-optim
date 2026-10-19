@@ -182,6 +182,33 @@ def _ensure_validation_ok(validation: dict) -> None:
         raise IngestError("应用后校验失败: " + json.dumps(validation, ensure_ascii=False))
 
 
+def _cleanup_after_apply(work: Path, result: dict) -> dict:
+    """Keep the first applied entry's evidence, then release this run's materials."""
+    names = ("paper", "repo", "cache", "staged")
+    materials = [state.contained(work, work / name) for name in names]
+    archive = state.contained(work, work / "first-applied")
+    http_cache = state.contained(state.RUNS_ROOT, state.RUNS_ROOT / ".cache" / "ingest")
+    for path in [*materials, archive, http_cache.parent, http_cache]:
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise IngestError(f"Unsafe cleanup path: {path}")
+
+    if not archive.exists():
+        with tempfile.TemporaryDirectory(prefix=".first-applied-", dir=work) as folder:
+            saved = Path(folder)
+            for source in materials:
+                if source.exists():
+                    shutil.copytree(source, saved / source.name)
+            state.atomic_json(saved / "applied.json", result)
+            saved.rename(archive)
+
+    removed = []
+    for path in [*materials, http_cache]:
+        if path.exists():
+            shutil.rmtree(path)
+            removed.append(str(path.relative_to(state.RUNS_ROOT)))
+    return {"ok": True, "first_applied": str(archive), "removed": removed}
+
+
 def apply() -> dict:
     """Apply the staged entry under the run workdir; the exact staged files are applied."""
     work, hub = state.workdir(), state.HUB
@@ -265,5 +292,12 @@ def apply() -> dict:
             f'git commit -m "Update {name} entry"',
         ],
     }
+    # Persist the verified application before removing any working evidence.
+    state.progress(name, "applied", result)
+    try:
+        result["workspace_cleanup"] = _cleanup_after_apply(work, result)
+    except (OSError, IngestError) as exc:
+        # The hub application has succeeded; a cleanup failure must not hide it.
+        result["workspace_cleanup"] = {"ok": False, "error": str(exc)}
     state.progress(name, "applied", result)
     return result
